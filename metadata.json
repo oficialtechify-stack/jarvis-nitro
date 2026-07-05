@@ -1,0 +1,14 @@
+{
+  "name": "Remix: J.A.R.V.I.S. Terminal",
+  "description": "Terminal holográfico avançado para Henrique. Conversão de tempo em tempo real, inteligência Stark e interface otimizada para Zorin OS.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation",
+    "camera"
+  ],
+  "majorCapabilities": [
+    "AI-powered voice interactions",
+    "Real-time data visualization",
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
