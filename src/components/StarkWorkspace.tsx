@@ -29,7 +29,9 @@ import {
   TrendingDown,
   Edit2,
   FileText,
-  Volume2
+  Volume2,
+  Globe,
+  Newspaper
 } from 'lucide-react';
 import { 
   generateStarkWorkspaceContent, 
@@ -89,13 +91,20 @@ interface StarkTimeline {
 export default function StarkWorkspace({ 
   onClose,
   activeTab: controlledTab,
-  onTabChange
+  onTabChange,
+  news = [],
+  isLoadingNews = false,
+  onAskJarvisNews
 }: { 
   onClose: () => void;
-  activeTab?: 'calendar' | 'time' | 'generator' | 'finance';
-  onTabChange?: (tab: 'calendar' | 'time' | 'generator' | 'finance') => void;
+  activeTab?: 'calendar' | 'time' | 'generator' | 'finance' | 'news';
+  onTabChange?: (tab: 'calendar' | 'time' | 'generator' | 'finance' | 'news') => void;
+  news?: any[];
+  isLoadingNews?: boolean;
+  onAskJarvisNews?: (title: string, source: string) => void;
 }) {
-  const [localActiveTab, setLocalActiveTab] = useState<'calendar' | 'time' | 'generator' | 'finance'>('calendar');
+  const [localActiveTab, setLocalActiveTab] = useState<'calendar' | 'time' | 'generator' | 'finance' | 'news'>('calendar');
+  const [newsCategoryFilter, setNewsCategoryFilter] = useState('Todos');
   const activeTab = controlledTab !== undefined ? controlledTab : localActiveTab;
   const setActiveTab = onTabChange || setLocalActiveTab;
   
@@ -285,7 +294,7 @@ export default function StarkWorkspace({
 
       // Troca automática de abas se requisitado pelo J.A.R.V.I.S
       const requestedTab = localStorage.getItem('stark_requested_tab');
-      if (requestedTab === 'calendar' || requestedTab === 'time' || requestedTab === 'generator' || requestedTab === 'finance') {
+      if (requestedTab === 'calendar' || requestedTab === 'time' || requestedTab === 'generator' || requestedTab === 'finance' || requestedTab === 'news') {
         setActiveTab(requestedTab as any);
         localStorage.removeItem('stark_requested_tab');
       }
@@ -1009,6 +1018,17 @@ export default function StarkWorkspace({
         >
           <DollarSign size={13} className="flex-shrink-0" />
           <span>Finanças<span className="hidden sm:inline"> AI</span></span>
+        </button>
+        <button
+          onClick={() => setActiveTab('news')}
+          className={`flex-1 flex-shrink-0 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-[10px] md:text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
+            activeTab === 'news' 
+              ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_10px_rgba(6,182,212,0.1)] font-mono' 
+              : 'text-white/40 hover:text-white/70 hover:bg-white/[0.02]'
+          }`}
+        >
+          <Globe size={13} className="flex-shrink-0" />
+          <span>Notícias<span className="hidden sm:inline"> Google</span></span>
         </button>
 
         {/* Close Button for Responsive Mobile layout */}
@@ -2553,6 +2573,143 @@ export default function StarkWorkspace({
                 })()}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ---------------------------------------------------- */}
+        {/* TAB 5: GOOGLE NEWS & DISCOVER */}
+        {/* ---------------------------------------------------- */}
+        {activeTab === 'news' && (
+          <div className="space-y-5 max-w-2xl mx-auto w-full">
+            
+            {/* Header / Brand */}
+            <div className="text-center flex flex-col items-center justify-center space-y-1.5 py-2">
+              <div className="flex items-center gap-1.5 text-lg font-extrabold tracking-tight">
+                <span className="text-[#4285F4]">G</span>
+                <span className="text-[#EA4335]">o</span>
+                <span className="text-[#FBBC05]">o</span>
+                <span className="text-[#4285F4]">g</span>
+                <span className="text-[#34A853]">l</span>
+                <span className="text-[#EA4335]">e</span>
+                <span className="text-white/80 ml-1.5 font-sans font-light tracking-widest uppercase text-xs">Notícias</span>
+              </div>
+              <p className="text-[9px] text-white/45 max-w-[320px] text-center uppercase tracking-[0.2em] font-mono leading-relaxed">
+                CENTRAL MUNDIAL • SISTEMA DE DESCOBERTAS
+              </p>
+            </div>
+
+            {/* Filter Categories */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-none flex-nowrap border-b border-white/5">
+              {['Todos', 'Tecnologia', 'Ciência', 'Economia', 'Mundo'].map((cat) => {
+                const isActive = newsCategoryFilter === cat;
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setNewsCategoryFilter(cat)}
+                    className={`flex-shrink-0 px-3.5 py-1.5 text-[9px] font-mono font-bold uppercase rounded-full border transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30 shadow-[0_0_8px_rgba(6,182,212,0.15)]'
+                        : 'bg-white/[0.01] border-white/5 text-white/40 hover:text-white/70'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* News Stream */}
+            <div className="space-y-4">
+              {isLoadingNews ? (
+                <div className="flex flex-col items-center justify-center py-12 space-y-3">
+                  <div className="w-6 h-6 border-2 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin" />
+                  <p className="text-[10px] text-white/30 uppercase tracking-widest font-mono">
+                    Sincronizando feed mundial...
+                  </p>
+                </div>
+              ) : (news || []).filter(item => {
+                if (newsCategoryFilter === 'Todos') return true;
+                return (item.category || '').toLowerCase().includes(newsCategoryFilter.toLowerCase());
+              }).length === 0 ? (
+                <div className="text-center py-10 bg-white/[0.01] rounded-2xl border border-dashed border-white/5 text-xs text-white/30 italic">
+                  Nenhuma manchete correspondente encontrada.
+                </div>
+              ) : (
+                (news || []).filter(item => {
+                  if (newsCategoryFilter === 'Todos') return true;
+                  return (item.category || '').toLowerCase().includes(newsCategoryFilter.toLowerCase());
+                }).map((item, idx) => {
+                  // Determine background gradient depending on category
+                  let grad = 'from-blue-500/5 to-indigo-500/5';
+                  let badgeColor = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+                  
+                  if ((item.category || '').toLowerCase().includes('tec')) {
+                    grad = 'from-cyan-500/5 to-blue-500/5';
+                    badgeColor = 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20';
+                  } else if ((item.category || '').toLowerCase().includes('ciê') || (item.category || '').toLowerCase().includes('cie')) {
+                    grad = 'from-purple-500/5 to-pink-500/5';
+                    badgeColor = 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+                  } else if ((item.category || '').toLowerCase().includes('eco') || (item.category || '').toLowerCase().includes('fin')) {
+                    grad = 'from-emerald-500/5 to-teal-500/5';
+                    badgeColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+                  } else if ((item.category || '').toLowerCase().includes('mun') || (item.category || '').toLowerCase().includes('pol')) {
+                    grad = 'from-amber-500/5 to-orange-500/5';
+                    badgeColor = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+                  }
+
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`group relative overflow-hidden bg-gradient-to-br ${grad} border border-white/5 hover:border-cyan-500/20 rounded-2xl p-4 shadow-sm hover:shadow-[0_4px_24px_rgba(6,182,212,0.05)] transition-all duration-300`}
+                    >
+                      {/* Top Row: category and source */}
+                      <div className="flex items-center justify-between gap-2 mb-2.5">
+                        <span className={`text-[8px] font-bold tracking-widest uppercase px-2 py-0.5 rounded border ${badgeColor}`}>
+                          {item.category || 'Notícia'}
+                        </span>
+                        <div className="flex items-center gap-1.5 text-[9px] font-mono text-white/40">
+                          <Globe size={10} className="text-white/30" />
+                          <span>{item.source}</span>
+                          <span className="text-white/20">•</span>
+                          <span>Recente</span>
+                        </div>
+                      </div>
+
+                      {/* Title */}
+                      <h3 className="text-xs md:text-[13px] font-bold text-white/90 group-hover:text-cyan-300 transition-colors tracking-wide leading-relaxed font-sans">
+                        {item.title}
+                      </h3>
+
+                      {/* Action Row */}
+                      <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-white/[0.03]">
+                        {onAskJarvisNews && (
+                          <button
+                            type="button"
+                            onClick={() => onAskJarvisNews(item.title, item.source)}
+                            className="px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 hover:text-white border border-cyan-500/15 rounded-xl text-[9px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1 cursor-pointer"
+                          >
+                            <Sparkles size={11} />
+                            <span>Análise J.A.R.V.I.S.</span>
+                          </button>
+                        )}
+                        {item.url && item.url !== "#" && (
+                          <a
+                            href={item.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1.5 bg-white/[0.02] hover:bg-white/[0.06] text-white/65 hover:text-white border border-white/5 hover:border-white/10 rounded-xl text-[9px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1"
+                          >
+                            <span>Ler Matéria</span>
+                            <ArrowUpRight size={11} />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         )}
 

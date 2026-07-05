@@ -1,13 +1,32 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Remix: J.A.R.V.I.S. Terminal</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#0a0f1d" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="J.A.R.V.I.S." />
+    <link rel="apple-touch-icon" href="/icon.jpg" />
+    <link rel="manifest" href="/manifest.json" />
   </head>
-  <body>
+  <body class="bg-[#0a0f1d] text-white antialiased selection:bg-cyan-500/30">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- Register Service Worker -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('J.A.R.V.I.S. Service Worker registrado com sucesso:', reg.scope))
+            .catch(err => console.error('Erro ao registrar Service Worker:', err));
+        });
+      }
+    </script>
   </body>
 </html>
 

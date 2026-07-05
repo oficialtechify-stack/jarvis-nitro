@@ -41,7 +41,9 @@ import {
   EyeOff,
   Paperclip,
   Upload,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Smartphone,
+  Download
 } from 'lucide-react';
 import { getJarvisResponse, jarvisSpeak, getTopWorldNews, NewsItem } from './lib/gemini';
 import NeuralCore from './components/NeuralCore';
@@ -75,7 +77,33 @@ export default function App() {
   // Jarvis Custom Settings State
   const [showSettings, setShowSettings] = useState(false);
   const [showWorkspace, setShowWorkspace] = useState(false);
-  const [workspaceTab, setWorkspaceTab] = useState<'calendar' | 'time' | 'generator' | 'finance'>('calendar');
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`User chosen outcome: ${outcome}`);
+      setDeferredPrompt(null);
+    } else {
+      // Prompt not natively available, show custom instruction dialog
+      setShowInstallModal(true);
+    }
+  };
+
+  const [workspaceTab, setWorkspaceTab] = useState<'calendar' | 'time' | 'generator' | 'finance' | 'news'>('calendar');
   const [speechRate, setSpeechRate] = useState(() => parseFloat(localStorage.getItem('jarvis_speech_rate') || '1.05'));
   const [speechPitch, setSpeechPitch] = useState(() => parseFloat(localStorage.getItem('jarvis_speech_pitch') || '0.95'));
   const [selectedVoiceName, setSelectedVoiceName] = useState(() => localStorage.getItem('jarvis_speech_voice_name') || '');
@@ -641,6 +669,14 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
     }
   };
 
+  const handleAskJarvisNews = (title: string, source: string) => {
+    if (window.innerWidth < 1024) {
+      setShowWorkspace(false);
+    }
+    jarvisSpeak(`Entendido, Sir Henrique. Iniciando análise heurística da notícia sobre: ${title}.`);
+    handleSendMessage(undefined, `J.A.R.V.I.S., por favor faça uma análise profunda, heurística e estratégica sobre esta notícia recente: "${title}" (publicada por ${source}). Quais são as implicações e o impacto disso para o futuro?`);
+  };
+
   const getTimeInZone = (offset: number) => {
     const d = new Date(currentTime.getTime() + (currentTime.getTimezoneOffset() * 60000) + (offset * 3600000));
     return d.toLocaleTimeString('pt-BR', { hour: '2-digit', hour12: false, minute: '2-digit' });
@@ -712,81 +748,7 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
         </div>
       </header>
 
-      {/* Real-time World News Carousel (Grounded Search Integration) */}
-      <div className="relative z-20 w-full max-w-4xl mx-auto px-4 md:px-0 mt-1 mb-2">
-        <div className="bg-white/[0.02] backdrop-blur-3xl border border-white/5 rounded-2xl p-3 flex items-center justify-between gap-4 overflow-hidden relative shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
-          
-          {/* Glowing News Label */}
-          <div className="flex items-center gap-2 flex-shrink-0 border-r border-white/10 pr-4">
-            <Globe size={13} className="text-cyan-400 animate-spin [animation-duration:15s]" />
-            <span className="text-[9px] font-bold tracking-[0.25em] text-cyan-300 uppercase font-mono">
-              MATRIZ MUNDIAL ONLINE
-            </span>
-          </div>
 
-          {/* Carousel Body */}
-          <div className="flex-1 min-w-0 h-6 relative flex items-center justify-start overflow-hidden">
-            <AnimatePresence mode="wait">
-              {news.length > 0 ? (
-                <motion.div
-                  key={currentNewsIndex}
-                  initial={{ y: 20, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  exit={{ y: -20, opacity: 0 }}
-                  transition={{ duration: 0.5, ease: "easeInOut" }}
-                  className="absolute inset-0 flex items-center gap-2.5 truncate"
-                >
-                  <span className="text-[10px] font-semibold font-mono bg-cyan-500/10 text-cyan-400 rounded px-1.5 py-0.5 border border-cyan-500/20 uppercase flex-shrink-0">
-                    {news[currentNewsIndex].category}
-                  </span>
-                  
-                  {news[currentNewsIndex].url && news[currentNewsIndex].url !== "#" ? (
-                    <a 
-                      href={news[currentNewsIndex].url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-white/90 hover:text-cyan-400 hover:underline truncate font-sans tracking-wide transition-colors"
-                    >
-                      {news[currentNewsIndex].title}
-                    </a>
-                  ) : (
-                    <span className="text-xs text-white/90 truncate font-sans tracking-wide">
-                      {news[currentNewsIndex].title}
-                    </span>
-                  )}
-                  
-                  <span className="text-[10px] text-white/30 italic font-mono flex-shrink-0">
-                    • {news[currentNewsIndex].source}
-                  </span>
-                </motion.div>
-              ) : (
-                <div className="text-xs text-white/20 animate-pulse flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 bg-cyan-400/80 rounded-full animate-ping" />
-                  Sintonizando satélites de notícias online em tempo real...
-                </div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* Navigation Controls */}
-          {news.length > 0 && (
-            <div className="flex items-center gap-1.5 border-l border-white/10 pl-4 flex-shrink-0">
-              {news.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setCurrentNewsIndex(i)}
-                  className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
-                    i === currentNewsIndex 
-                      ? 'bg-cyan-400 w-3' 
-                      : 'bg-white/10 hover:bg-white/30'
-                  }`}
-                  aria-label={`Ir para notícia ${i + 1}`}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* Main Workspace (Split-screen Dashboard Layout when Workspace is open) */}
       <div className="flex-1 flex min-h-0 w-full relative z-20 overflow-hidden">
@@ -799,7 +761,7 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: -350, opacity: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="w-full lg:w-[320px] xl:w-[350px] h-full flex-shrink-0 border-r border-cyan-500/10 bg-black/95 backdrop-blur-3xl p-5 flex flex-col gap-4 relative z-30"
+              className="fixed inset-y-0 left-0 z-40 lg:relative lg:inset-auto w-full max-w-[320px] lg:max-w-none lg:w-[320px] xl:w-[350px] h-full flex-shrink-0 border-r border-cyan-500/10 bg-[#07090e]/98 backdrop-blur-3xl p-5 flex flex-col gap-4"
             >
               {/* Sidebar Header */}
               <div className="flex items-center justify-between border-b border-white/5 pb-3">
@@ -1250,12 +1212,15 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 350, opacity: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="w-full lg:w-[400px] xl:w-[450px] h-full flex-shrink-0 border-l border-cyan-500/10"
+              className="fixed inset-y-0 right-0 z-40 lg:relative lg:inset-auto w-full lg:w-[400px] xl:w-[450px] h-full flex-shrink-0 border-l border-cyan-500/10 bg-[#07090e]/98 backdrop-blur-3xl"
             >
               <StarkWorkspace 
                 onClose={() => setShowWorkspace(false)} 
                 activeTab={workspaceTab}
                 onTabChange={setWorkspaceTab}
+                news={news}
+                isLoadingNews={isLoadingNews}
+                onAskJarvisNews={handleAskJarvisNews}
               />
             </motion.div>
           )}
@@ -1287,6 +1252,37 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
               });
             }} 
             tooltip="Histórico" 
+          />
+          <DockIcon 
+            icon={<Globe size={20} />} 
+            active={showWorkspace && workspaceTab === 'news'} 
+            onClick={() => {
+              setShowWorkspace(prev => {
+                const next = !prev || workspaceTab !== 'news';
+                if (next) {
+                  setWorkspaceTab('news');
+                  jarvisSpeak("Sir Henrique, abrindo o painel de Notícias integrado de estilo Google.");
+                } else {
+                  jarvisSpeak("Painel de Notícias ocultado.");
+                }
+                return next;
+              });
+            }} 
+            tooltip="Notícias Google" 
+          />
+          <DockIcon 
+            icon={<Smartphone size={20} />} 
+            active={showInstallModal} 
+            onClick={() => {
+              setShowInstallModal(prev => {
+                const next = !prev;
+                if (next) {
+                  jarvisSpeak("Sir Henrique, abrindo o painel de instalação móvel para baixar o aplicativo diretamente no seu celular.");
+                }
+                return next;
+              });
+            }} 
+            tooltip="Baixar no Celular" 
           />
           <DockIcon 
             icon={<Settings size={20} />} 
@@ -1592,6 +1588,149 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
                 </button>
               </div>
 
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* PWA / Mobile Download Modal Layer */}
+      <AnimatePresence>
+        {showInstallModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowInstallModal(false)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-md"
+            />
+
+            {/* Modal Body */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: "spring", duration: 0.4 }}
+              className="relative w-full max-w-lg bg-[#07090e]/95 border border-cyan-500/20 rounded-2xl p-6 shadow-[0_0_50px_rgba(6,182,212,0.15)] backdrop-blur-2xl flex flex-col gap-5 overflow-hidden ring-1 ring-cyan-500/10 z-50 text-white"
+            >
+              <div className="absolute top-4 right-4 z-10">
+                <button 
+                  onClick={() => setShowInstallModal(false)}
+                  className="text-white/40 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/5 cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Title Header */}
+              <div className="flex items-center gap-3">
+                <div className="w-[36px] h-[36px] bg-cyan-500/10 rounded-xl border border-cyan-500/20 flex items-center justify-center text-cyan-400">
+                  <Smartphone size={20} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold tracking-widest text-cyan-400 font-mono uppercase">
+                    Instalar J.A.R.V.I.S. no Celular
+                  </h2>
+                  <p className="text-[10px] text-white/40 uppercase tracking-wider font-semibold">
+                    Acesso Direto, Tela Cheia & Modo Offline
+                  </p>
+                </div>
+              </div>
+
+              {/* Grid Content */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-5 py-2 items-center">
+                {/* QR Code Column */}
+                <div className="md:col-span-5 flex flex-col items-center justify-center bg-black/40 border border-white/5 rounded-2xl p-4 gap-2 text-center">
+                  <span className="text-[9px] font-mono text-cyan-400/80 uppercase tracking-wider">Aponte a Câmera</span>
+                  <div className="relative p-2 bg-white/5 rounded-xl border border-white/10 overflow-hidden group">
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&color=06b6d4&bgcolor=0a0f1d&data=${encodeURIComponent(window.location.href)}`}
+                      alt="QR Code J.A.R.V.I.S."
+                      className="w-[140px] h-[140px] md:w-[150px] md:h-[150px] rounded"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute inset-0 border border-cyan-500/20 rounded-xl pointer-events-none" />
+                  </div>
+                  <p className="text-[9px] text-white/40 font-sans max-w-[140px] leading-relaxed">
+                    Escaneie para abrir no celular instantaneamente.
+                  </p>
+                </div>
+
+                {/* Instructions Column */}
+                <div className="md:col-span-7 space-y-3.5">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold tracking-widest text-cyan-400 uppercase font-mono block">Instruções de Instalação</span>
+                    <p className="text-[11px] text-white/50 leading-relaxed font-sans">
+                      Adicione à tela inicial do seu celular para obter a experiência nativa sem barra de navegação:
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    {/* iOS */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 flex gap-3">
+                      <div className="text-[11px] font-mono font-bold bg-cyan-500/10 text-cyan-400 w-5 h-5 rounded-full flex items-center justify-center shrink-0">iOS</div>
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-semibold text-white/80 block">No iPhone (Safari):</span>
+                        <p className="text-[10px] text-white/50 leading-relaxed font-sans">
+                          Clique em <span className="text-cyan-400">"Compartilhar"</span> (ícone de enviar) e depois selecione <span className="text-cyan-400">"Adicionar à Tela de Início"</span>.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Android */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 flex gap-3">
+                      <div className="text-[11px] font-mono font-bold bg-cyan-500/10 text-cyan-400 w-5 h-5 rounded-full flex items-center justify-center shrink-0">And</div>
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-semibold text-white/80 block">No Android (Chrome):</span>
+                        <p className="text-[10px] text-white/50 leading-relaxed font-sans">
+                          Clique nos <span className="text-cyan-400">três pontos</span> no canto superior e selecione <span className="text-cyan-400">"Adicionar à tela inicial"</span> ou <span className="text-cyan-400">"Instalar aplicativo"</span>.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Info Text */}
+              <p className="text-[10px] text-white/40 leading-relaxed font-sans bg-white/[0.02] border border-white/5 rounded-xl px-4 py-2.5">
+                ⚡ <span className="text-white/60 font-semibold">Tecnologia PWA Ativada:</span> O J.A.R.V.I.S. salva automaticamente arquivos essenciais em cache para funcionamento offline e inicialização super veloz no seu smartphone.
+              </p>
+
+              {/* Divider */}
+              <div className="h-[1px] bg-cyan-500/10 w-full" />
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowInstallModal(false)}
+                  className="flex-1 px-4 py-2.5 bg-white/[0.02] border border-white/5 hover:border-white/10 rounded-xl text-xs font-bold tracking-widest text-white/70 hover:text-white transition-all font-mono uppercase cursor-pointer"
+                >
+                  Voltar
+                </button>
+
+                {deferredPrompt ? (
+                  <button
+                    type="button"
+                    onClick={handleInstallApp}
+                    className="flex-1 px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 border border-cyan-500 text-black rounded-xl text-xs font-bold tracking-widest transition-all font-mono uppercase cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.3)] flex items-center justify-center gap-1.5"
+                  >
+                    <Download size={13} />
+                    Instalar Agora
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      jarvisSpeak("Sir Henrique, por favor siga o tutorial acima para adicionar o J.A.R.V.I.S. à tela inicial do seu celular manualmente.");
+                    }}
+                    className="flex-1 px-5 py-2.5 bg-white/[0.04] border border-white/10 text-cyan-400 rounded-xl text-xs font-bold tracking-widest transition-all font-mono uppercase cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    Suporte Pronto ✓
+                  </button>
+                )}
+              </div>
             </motion.div>
           </div>
         )}
