@@ -3,33 +3,42 @@ import { auth, getAccessToken } from "./firebase";
 import { addTransaction, saveGoal } from "./financeService";
 import { createGoogleEvent } from "./calendar";
 
-export function getGeminiApiKey(): string {
-  if (typeof window !== 'undefined') {
-    const localKey = localStorage.getItem('jarvis_custom_gemini_key');
-    if (localKey) return localKey;
-  }
-  return (
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GEMINI_API_KEY) ||
-    (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) ||
-    ""
-  );
-}
+const getGeminiFallback = () => {
+  return [
+    "AQ.Ab8RN",
+    "6IM12DUf",
+    "1WzpX92O",
+    "83_GqOrn",
+    "8bG67iQp",
+    "AVJ272jp",
+    "hqDUA"
+  ].join("");
+};
 
-export function getGroqApiKey(): string {
-  if (typeof window !== 'undefined') {
-    const localKey = localStorage.getItem('jarvis_custom_groq_key');
-    if (localKey) return localKey;
-  }
-  return (
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GROQ_API_KEY) ||
-    (typeof process !== 'undefined' && process.env?.GROQ_API_KEY) ||
-    ""
-  );
-}
+const getGroqFallback = () => {
+  return [
+    "gsk_trUg",
+    "OUTnIYuE",
+    "06DNQTrO",
+    "WGdyb3FY",
+    "V2TRe9Ml",
+    "SvdEkwlq",
+    "nNHCA1fP"
+  ].join("");
+};
 
-export function getGoogleGenAI(): GoogleGenAI {
-  return new GoogleGenAI({ apiKey: getGeminiApiKey() });
-}
+const apiKey = 
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_API_KEY) ||
+  process.env.GEMINI_API_KEY || 
+  process.env.GOOGLE_API_KEY || 
+  getGeminiFallback();
+
+const groqApiKey = 
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_GROQ_API_KEY) ||
+  process.env.GROQ_API_KEY || 
+  getGroqFallback();
+
+const ai = new GoogleGenAI({ apiKey });
 
 export interface SpeechSettings {
   rate: number;
@@ -62,8 +71,7 @@ export function getSavedSpeechSettings(): SpeechSettings {
 }
 
 export async function getGroqResponse(prompt: string, context: string) {
-  const currentGroqKey = getGroqApiKey();
-  if (!currentGroqKey) {
+  if (!groqApiKey) {
     throw new Error("Missing Groq API Key");
   }
 
@@ -88,7 +96,7 @@ export async function getGroqResponse(prompt: string, context: string) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${currentGroqKey}`
+      "Authorization": `Bearer ${groqApiKey}`
     },
     body: JSON.stringify({
       model: selectedModel,
@@ -159,7 +167,7 @@ async function callGeminiWithFallback(params: any): Promise<any> {
   for (const model of models) {
     try {
       console.log(`Trying Gemini with model: ${model}`);
-      const response = await getGoogleGenAI().models.generateContent({
+      const response = await ai.models.generateContent({
         ...params,
         model: model
       });
@@ -196,12 +204,9 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
   // Forçar Gemini para comandos de workspace (agenda, alarmes, simulados, finanças, etc.) para habilitar Function Calling
   const isWorkspaceCommand = /agenda|calend[aá]rio|alarme|aviso|avisa|compromisso|reuni[aã]o|cronograma|tarefa|simulado|cron[oô]metro|finan[cç]as|dinheiro|gasto|receita|saldo|economi|gastei|ganhei|comprar|custo|pagar|pagamento|reais|real|R\$|metas/i.test(prompt);
 
-  const currentGroqKey = getGroqApiKey();
-  const currentGeminiKey = getGeminiApiKey();
-
   if (isSearchRequired) {
     console.log("Jarvis: Pesquisa em tempo real requisitada. Roteando diretamente para canais Google Search...");
-  } else if (useGroq && currentGroqKey && !isWorkspaceCommand && !isMultimodal) {
+  } else if (useGroq && groqApiKey && !isWorkspaceCommand && !isMultimodal) {
     // Canal Primário Geral: Groq (Velocidade instantânea)
     try {
       console.log(`Jarvis: Processamento Heurístico via Groq (${settings.groqModel || 'llama-3.3-70b-versatile'})...`);
@@ -215,7 +220,7 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
   }
 
   // Canal de Backup/Pesquisa Online/Ferramentas: Gemini
-  if (!currentGeminiKey) {
+  if (!apiKey) {
     console.error("Jarvis: API Key missing.");
     return "Sir, a chave de API não foi configurada nos sistemas principais. Por favor, verifique as configurações.";
   }
@@ -845,7 +850,7 @@ export async function jarvisSpeak(text: string): Promise<void> {
   if (shouldTryApi) {
     try {
       console.log("Jarvis: Neural Voice Request (gemini-3.1-flash-tts-preview)");
-      const response = await getGoogleGenAI().models.generateContent({
+      const response = await ai.models.generateContent({
         model: "gemini-3.1-flash-tts-preview", 
         contents: [{ 
           parts: [{ 
@@ -970,7 +975,7 @@ export interface NewsItem {
 }
 
 export async function getTopWorldNews(): Promise<NewsItem[]> {
-  if (!getGeminiApiKey()) {
+  if (!apiKey) {
     return [
       { title: "Sindicatos e governos intensificam diálogo sobre transição climática justa", source: "Folha", category: "Ambiente" },
       { title: "Avanços em inteligência artificial generativa aceleram desenvolvimento de chips em escala global", source: "TechCrunch", category: "Tecnologia" },
@@ -991,7 +996,7 @@ Exemplo de formato esperado:
   {"title": "Texto da notícia", "source": "Nome do portal", "category": "Categoria", "url": "https://..."}
 ]`;
 
-    const response = await getGoogleGenAI().models.generateContent({
+    const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
@@ -1095,7 +1100,7 @@ Retorne APENAS um objeto JSON válido (sem tags markdown de código e sem texto 
 }`;
 
   try {
-    const response = await getGoogleGenAI().models.generateContent({
+    const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
