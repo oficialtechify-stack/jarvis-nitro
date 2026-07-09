@@ -289,8 +289,8 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
         },
         tab: {
           type: Type.STRING,
-          enum: ["calendar", "time", "generator", "finance"],
-          description: "A aba do painel a ser exibida: 'calendar', 'time', 'generator' ou 'finance' (Vida Financeira)."
+          enum: ["calendar", "time", "generator", "finance", "projects"],
+          description: "A aba do painel a ser exibida: 'calendar', 'time', 'generator', 'finance' (Vida Financeira) ou 'projects' (Aba de Projetos)."
         }
       },
       required: ["show"]
@@ -413,6 +413,115 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
     }
   };
 
+  const deleteStarkItemTool: FunctionDeclaration = {
+    name: "delete_stark_item",
+    description: "Exclui um item específico de qualquer aba do painel do Senhor Henrique (finanças, eventos, alarmes, metas, projetos, cronogramas) usando o ID do item informado no contexto.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        itemType: {
+          type: Type.STRING,
+          enum: ["transaction", "goal", "event", "alarm", "project", "timeline"],
+          description: "O tipo de item a ser excluído."
+        },
+        id: {
+          type: Type.STRING,
+          description: "O ID único do item a ser excluído (conforme listado no contexto)."
+        }
+      },
+      required: ["itemType", "id"]
+    }
+  };
+
+  const manageStarkProjectsTool: FunctionDeclaration = {
+    name: "manage_stark_projects",
+    description: "Cria, atualiza ou adiciona notas de progresso em um projeto de desenvolvimento do Senhor Henrique.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        action: {
+          type: Type.STRING,
+          enum: ["create", "update_progress", "add_log"],
+          description: "Ação a ser realizada: 'create' (criar novo projeto), 'update_progress' (atualizar o status de progresso do projeto) ou 'add_log' (adicionar uma atualização com data no histórico)."
+        },
+        projectId: {
+          type: Type.STRING,
+          description: "O ID do projeto a ser atualizado (obrigatório para 'update_progress' e 'add_log')."
+        },
+        title: {
+          type: Type.STRING,
+          description: "O nome ou título do novo projeto."
+        },
+        description: {
+          type: Type.STRING,
+          description: "Descrição detalhada do novo projeto."
+        },
+        objectives: {
+          type: Type.STRING,
+          description: "Objetivos do novo projeto."
+        },
+        resources: {
+          type: Type.STRING,
+          description: "Recursos e tecnologias do novo projeto."
+        },
+        deadline: {
+          type: Type.STRING,
+          description: "Prazo final no formato YYYY-MM-DD."
+        },
+        category: {
+          type: Type.STRING,
+          enum: ["andamento", "planejamento", "concluido", "pausa"],
+          description: "Categoria de status do projeto."
+        },
+        progress: {
+          type: Type.STRING,
+          description: "Texto atualizado sobre o progresso do projeto."
+        },
+        logText: {
+          type: Type.STRING,
+          description: "Descrição do log/atualização histórica do projeto."
+        }
+      },
+      required: ["action"]
+    }
+  };
+
+  const manageStarkTimelinesTool: FunctionDeclaration = {
+    name: "manage_stark_timelines",
+    description: "Cria ou altera cronogramas de estudo e tarefas.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        action: {
+          type: Type.STRING,
+          enum: ["create", "add_task", "toggle_task"],
+          description: "Ação: 'create' (criar cronograma), 'add_task' (adicionar tarefa), 'toggle_task' (concluir/desmarcar tarefa)."
+        },
+        timelineId: {
+          type: Type.STRING,
+          description: "O ID do cronograma (necessário para 'add_task' e 'toggle_task')."
+        },
+        title: {
+          type: Type.STRING,
+          description: "Título do cronograma ou da nova tarefa."
+        },
+        topic: {
+          type: Type.STRING,
+          description: "Tópico do cronograma (ex: 'Python', 'Finanças')."
+        },
+        targetDate: {
+          type: Type.STRING,
+          description: "Data prazo no formato YYYY-MM-DD."
+        },
+        taskId: {
+          type: Type.STRING,
+          description: "O ID da tarefa a ser alternada (para 'toggle_task')."
+        }
+      },
+      required: ["action"]
+    }
+  };
+
   try {
     const userParts: any[] = [
       {
@@ -476,7 +585,10 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
               generateStarkContentTool,
               manageStarkFinancesTool,
               manageGoogleCalendarTool,
-              openBrowserUrlTool
+              openBrowserUrlTool,
+              deleteStarkItemTool,
+              manageStarkProjectsTool,
+              manageStarkTimelinesTool
             ]
           } as any
         ],
@@ -558,41 +670,36 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
         }
         else if (name === "manage_stark_finances") {
           try {
-            const user = auth.currentUser;
-            if (!user) {
-              actionsLog += `[Finanças: Falha ao executar ação "${args.action}" pois o usuário não realizou login com o Google no painel lateral.] `;
-            } else {
-              localStorage.setItem('stark_requested_tab', 'finance');
-              if (args.action === "add_transaction") {
-                const amount = args.amount || 0;
-                const desc = args.description || "Sem descrição";
-                const type = args.type || "expense";
-                const category = args.category || "Outros";
-                const date = args.date || new Date().toISOString().split('T')[0];
-                
-                await addTransaction(user.uid, {
-                  description: desc,
-                  amount,
-                  type,
-                  category,
-                  date,
-                  source: 'chat'
-                });
-                actionsLog += `[Finanças: Registrado com sucesso ${type === 'income' ? 'Ganho' : 'Gasto'} de R$ ${amount.toFixed(2)} em "${desc}" na categoria "${category}"] `;
-              } else if (args.action === "add_goal") {
-                const title = args.goalTitle || "Meta de Economia";
-                const target = args.goalTargetAmount || 1000;
-                
-                await saveGoal(user.uid, {
-                  id: '',
-                  title,
-                  targetAmount: target,
-                  currentAmount: 0
-                });
-                actionsLog += `[Finanças: Criada nova meta de economia "${title}" com o valor alvo de R$ ${target.toFixed(2)}] `;
-              } else if (args.action === "get_summary") {
-                actionsLog += `[Finanças: Consultou saldo e resumo financeiro na aba Vida Financeira.] `;
-              }
+            localStorage.setItem('stark_requested_tab', 'finance');
+            if (args.action === "add_transaction") {
+              const amount = args.amount || 0;
+              const desc = args.description || "Sem descrição";
+              const type = args.type || "expense";
+              const category = args.category || "Outros";
+              const date = args.date || new Date().toISOString().split('T')[0];
+              
+              await addTransaction('demo_user', {
+                description: desc,
+                amount,
+                type,
+                category,
+                date,
+                source: 'chat'
+              });
+              actionsLog += `[Finanças: Registrado com sucesso ${type === 'income' ? 'Ganho' : 'Gasto'} de R$ ${amount.toFixed(2)} em "${desc}" na categoria "${category}"] `;
+            } else if (args.action === "add_goal") {
+              const title = args.goalTitle || "Meta de Economia";
+              const target = args.goalTargetAmount || 1000;
+              
+              await saveGoal('demo_user', {
+                id: '',
+                title,
+                targetAmount: target,
+                currentAmount: 0
+              });
+              actionsLog += `[Finanças: Criada nova meta de economia "${title}" com o valor alvo de R$ ${target.toFixed(2)}] `;
+            } else if (args.action === "get_summary") {
+              actionsLog += `[Finanças: Consultou saldo e resumo financeiro na aba Vida Financeira.] `;
             }
           } catch (e) {
             console.error("Erro ao rodar manage_stark_finances", e);
@@ -601,31 +708,30 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
         }
         else if (name === "manage_google_calendar") {
           try {
-            const token = await getAccessToken();
-            if (!token) {
-              actionsLog += `[Google Agenda: Falha ao executar ação "${args.action}" pois a conta Google não está sincronizada/conectada no painel lateral.] `;
-            } else {
-              localStorage.setItem('stark_requested_tab', 'calendar');
-              if (args.action === "create_event") {
-                const title = args.title || "Reunião Stark";
-                const date = args.date || new Date().toISOString().split('T')[0];
-                const time = args.time || "10:00";
-                const desc = args.description || "Criado via J.A.R.V.I.S. Neural Command";
-                
-                await createGoogleEvent(token, {
-                  title,
-                  date,
-                  time,
-                  description: desc
-                });
-                actionsLog += `[Google Agenda: Evento "${title}" criado com sucesso na sua conta Google para ${date} às ${time}] `;
-              } else if (args.action === "list_events") {
-                actionsLog += `[Google Agenda: Listando compromissos reais sincronizados com sucesso no painel lateral.] `;
-              }
+            localStorage.setItem('stark_requested_tab', 'calendar');
+            if (args.action === "create_event" || args.action === "list_events") {
+              const title = args.title || "Compromisso Stark";
+              const date = args.date || new Date().toISOString().split('T')[0];
+              const time = args.time || "10:00";
+              const desc = args.description || "Agendado via J.A.R.V.I.S.";
+              
+              const saved = localStorage.getItem('stark_events');
+              const events = saved ? JSON.parse(saved) : [];
+              const newEvent = {
+                id: 'evt_' + Math.random().toString(36).substr(2, 9),
+                title,
+                date,
+                time,
+                type: "Compromisso",
+                description: desc
+              };
+              events.push(newEvent);
+              localStorage.setItem('stark_events', JSON.stringify(events));
+              actionsLog += `[Agenda Local: Compromisso "${title}" criado com sucesso para o dia ${date} às ${time}] `;
             }
           } catch (e) {
             console.error("Erro ao rodar manage_google_calendar", e);
-            actionsLog += `[Google Agenda: Erro técnico ao sincronizar com os servidores do Google.] `;
+            actionsLog += `[Agenda Local: Erro técnico ao tentar salvar o compromisso.] `;
           }
         }
         else if (name === "open_browser_url") {
@@ -650,6 +756,195 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
           } catch (e) {
             console.error("Erro ao rodar open_browser_url", e);
             actionsLog += `[Navegador: Erro ao tentar abrir o endereço solicitado.] `;
+          }
+        }
+        else if (name === "delete_stark_item") {
+          try {
+            const itemType = args.itemType;
+            const targetId = args.id;
+            
+            if (itemType === "transaction") {
+              const saved = localStorage.getItem('stark_demo_transactions');
+              if (saved) {
+                const txs = JSON.parse(saved);
+                const filtered = txs.filter((t: any) => t.id !== targetId);
+                localStorage.setItem('stark_demo_transactions', JSON.stringify(filtered));
+                localStorage.setItem('stark_requested_tab', 'finance');
+                actionsLog += `[Finanças: Transação removida de seus lançamentos] `;
+              }
+            }
+            else if (itemType === "goal") {
+              const saved = localStorage.getItem('stark_demo_goals');
+              if (saved) {
+                const goals = JSON.parse(saved);
+                const filtered = goals.filter((g: any) => g.id !== targetId);
+                localStorage.setItem('stark_demo_goals', JSON.stringify(filtered));
+                localStorage.setItem('stark_requested_tab', 'finance');
+                actionsLog += `[Finanças: Meta financeira removida com sucesso] `;
+              }
+            }
+            else if (itemType === "event") {
+              const saved = localStorage.getItem('stark_events');
+              if (saved) {
+                const events = JSON.parse(saved);
+                const filtered = events.filter((e: any) => e.id !== targetId);
+                localStorage.setItem('stark_events', JSON.stringify(filtered));
+                localStorage.setItem('stark_requested_tab', 'calendar');
+                actionsLog += `[Agenda: Evento excluído com sucesso de seus compromissos] `;
+              }
+            }
+            else if (itemType === "alarm") {
+              const saved = localStorage.getItem('stark_alarms');
+              if (saved) {
+                const alarms = JSON.parse(saved);
+                const filtered = alarms.filter((a: any) => a.id !== targetId);
+                localStorage.setItem('stark_alarms', JSON.stringify(filtered));
+                localStorage.setItem('stark_requested_tab', 'time');
+                actionsLog += `[Alarmes: Alarme desprogramado e excluído com sucesso] `;
+              }
+            }
+            else if (itemType === "project") {
+              const saved = localStorage.getItem('stark_projects');
+              if (saved) {
+                const projects = JSON.parse(saved);
+                const filtered = projects.filter((p: any) => p.id !== targetId);
+                localStorage.setItem('stark_projects', JSON.stringify(filtered));
+                localStorage.setItem('stark_requested_tab', 'projects');
+                actionsLog += `[Projetos: Projeto removido permanentemente de seu Córtex] `;
+              }
+            }
+            else if (itemType === "timeline") {
+              const saved = localStorage.getItem('stark_timelines');
+              if (saved) {
+                const timelines = JSON.parse(saved);
+                const filtered = timelines.filter((t: any) => t.id !== targetId);
+                localStorage.setItem('stark_timelines', JSON.stringify(filtered));
+                localStorage.setItem('stark_requested_tab', 'calendar');
+                actionsLog += `[Cronograma: Cronograma de estudos removido] `;
+              }
+            }
+          } catch (e) {
+            console.error("Erro ao rodar delete_stark_item", e);
+            actionsLog += `[Remoção: Erro técnico ao tentar excluir o item do local storage.] `;
+          }
+        }
+        else if (name === "manage_stark_projects") {
+          try {
+            localStorage.setItem('stark_requested_tab', 'projects');
+            const saved = localStorage.getItem('stark_projects');
+            let projects = saved ? JSON.parse(saved) : [];
+            
+            if (args.action === "create") {
+              const newProj = {
+                id: 'proj_' + Math.random().toString(36).substr(2, 9),
+                name: args.title || "Novo Projeto Stark",
+                category: args.category || "andamento",
+                description: args.description || "Nenhuma descrição fornecida.",
+                objectives: args.objectives || "Nenhum objetivo definido.",
+                resources: args.resources || "Nenhum recurso listado.",
+                deadline: args.deadline || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                progress: args.progress || "Iniciado.",
+                updates: []
+              };
+              projects.push(newProj);
+              localStorage.setItem('stark_projects', JSON.stringify(projects));
+              actionsLog += `[Projetos: Criado o projeto "${newProj.name}"] `;
+            }
+            else if (args.action === "update_progress") {
+              const pId = args.projectId;
+              projects = projects.map((p: any) => {
+                if (p.id === pId) {
+                  return { ...p, progress: args.progress || p.progress, category: args.category || p.category };
+                }
+                return p;
+              });
+              localStorage.setItem('stark_projects', JSON.stringify(projects));
+              actionsLog += `[Projetos: Progresso/Status do projeto com ID "${pId}" atualizado] `;
+            }
+            else if (args.action === "add_log") {
+              const pId = args.projectId;
+              const newLog = {
+                id: 'up_' + Date.now(),
+                date: new Date().toISOString().split('T')[0],
+                text: args.logText || "Log de atualização automática do J.A.R.V.I.S."
+              };
+              projects = projects.map((p: any) => {
+                if (p.id === pId) {
+                  return {
+                    ...p,
+                    updates: [newLog, ...(p.updates || [])]
+                  };
+                }
+                return p;
+              });
+              localStorage.setItem('stark_projects', JSON.stringify(projects));
+              actionsLog += `[Projetos: Nova nota de progresso registrada no projeto com ID "${pId}"] `;
+            }
+          } catch (e) {
+            console.error("Erro ao rodar manage_stark_projects", e);
+            actionsLog += `[Projetos: Erro técnico ao gerenciar projeto.] `;
+          }
+        }
+        else if (name === "manage_stark_timelines") {
+          try {
+            localStorage.setItem('stark_requested_tab', 'calendar');
+            const saved = localStorage.getItem('stark_timelines');
+            let timelines = saved ? JSON.parse(saved) : [];
+            
+            if (args.action === "create") {
+              const newTimeline = {
+                id: 'tl_' + Math.random().toString(36).substr(2, 9),
+                title: args.title || "Novo Cronograma",
+                topic: args.topic || "Geral",
+                targetDate: args.targetDate || new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                tasks: []
+              };
+              timelines.push(newTimeline);
+              localStorage.setItem('stark_timelines', JSON.stringify(timelines));
+              actionsLog += `[Cronogramas: Criado novo cronograma "${newTimeline.title}"] `;
+            }
+            else if (args.action === "add_task") {
+              const tlId = args.timelineId;
+              const newTask = {
+                id: 'task_' + Math.random().toString(36).substr(2, 9),
+                title: args.title || "Nova Tarefa",
+                done: false
+              };
+              timelines = timelines.map((tl: any) => {
+                if (tl.id === tlId) {
+                  return {
+                    ...tl,
+                    tasks: [...(tl.tasks || []), newTask]
+                  };
+                }
+                return tl;
+              });
+              localStorage.setItem('stark_timelines', JSON.stringify(timelines));
+              actionsLog += `[Cronogramas: Adicionada tarefa "${newTask.title}" no cronograma com ID "${tlId}"] `;
+            }
+            else if (args.action === "toggle_task") {
+              const tlId = args.timelineId;
+              const tId = args.taskId;
+              timelines = timelines.map((tl: any) => {
+                if (tl.id === tlId) {
+                  return {
+                    ...tl,
+                    tasks: (tl.tasks || []).map((t: any) => {
+                      if (t.id === tId) {
+                        return { ...t, done: !t.done };
+                      }
+                      return t;
+                    })
+                  };
+                }
+                return tl;
+              });
+              localStorage.setItem('stark_timelines', JSON.stringify(timelines));
+              actionsLog += `[Cronogramas: Status da tarefa com ID "${tId}" no cronograma com ID "${tlId}" alterado] `;
+            }
+          } catch (e) {
+            console.error("Erro ao rodar manage_stark_timelines", e);
+            actionsLog += `[Cronogramas: Erro técnico ao gerenciar cronograma.] `;
           }
         }
       }

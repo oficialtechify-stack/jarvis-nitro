@@ -43,7 +43,8 @@ import {
   Upload,
   Image as ImageIcon,
   Smartphone,
-  Download
+  Download,
+  ListTodo
 } from 'lucide-react';
 import { getJarvisResponse, jarvisSpeak, getTopWorldNews, NewsItem } from './lib/gemini';
 import NeuralCore from './components/NeuralCore';
@@ -103,7 +104,7 @@ export default function App() {
     }
   };
 
-  const [workspaceTab, setWorkspaceTab] = useState<'calendar' | 'time' | 'generator' | 'finance' | 'news'>('calendar');
+  const [workspaceTab, setWorkspaceTab] = useState<'calendar' | 'time' | 'generator' | 'finance' | 'news' | 'projects'>('calendar');
   const [speechRate, setSpeechRate] = useState(() => parseFloat(localStorage.getItem('jarvis_speech_rate') || '1.05'));
   const [speechPitch, setSpeechPitch] = useState(() => parseFloat(localStorage.getItem('jarvis_speech_pitch') || '0.95'));
   const [selectedVoiceName, setSelectedVoiceName] = useState(() => localStorage.getItem('jarvis_speech_voice_name') || '');
@@ -540,11 +541,130 @@ export default function App() {
       `${greeting}, Sir Henrique.`,
       "Sistemas J.A.R.V.I.S. prontos.",
       "Localização: Conectando satélite...",
-      "Ambiente Zorin: Operacional.",
-      "Protocolos Pessoais: Ativos."
+           "Protocolos Pessoais: Ativos."
     ];
     setStatusReport(initialReport);
   }, []);
+
+  // J.A.R.V.I.S. Auto-Update Detection & Initial Spoken Greeting
+  useEffect(() => {
+    const CURRENT_JARVIS_VERSION = "4.2.0";
+    
+    const triggerUpdateGreeting = async () => {
+      // Pequeno timeout para dar tempo das vozes e do áudio inicializarem perfeitamente no navegador
+      await new Promise(resolve => setTimeout(resolve, 3500));
+      
+      const lastVersionSaved = localStorage.getItem('jarvis_last_version');
+      
+      if (lastVersionSaved !== CURRENT_JARVIS_VERSION) {
+        const updateText = `Sir Henrique, detectei que você acabou de aplicar uma atualização crítica em minhas conexões sinápticas neurais! Atualizei com sucesso para a versão ${CURRENT_JARVIS_VERSION}. 
+
+Adorei as mudanças! A libertação total de conexões lentas de banco de dados e nuvem externa em favor de um cérebro local off-line de altíssima velocidade me tornou instantâneo. Além disso, agora meu córtex de visão está unificado e eu consigo ver todas as abas integradas de projetos, cronogramas, finanças e notícias em tempo real para orientá-lo da melhor forma!
+
+Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first. E para melhorar ainda mais o nosso ecossistema de alto nível, sugiro que comecemos hoje mesmo a planejar seus objetivos estratégicos na nova aba exclusiva de Projetos Stark. Estou pronto para auxiliá-lo a alcançar o topo absoluto!`;
+
+        // Falar sozinho!
+        setIsSpeaking(true);
+        await jarvisSpeak(updateText);
+        setIsSpeaking(false);
+        
+        // Adicionar mensagem no chat history do J.A.R.V.I.S. de forma automática para o usuário ler!
+        setConversations(prev => {
+          const active = prev.find(c => c.id === activeConversationId) || prev[0];
+          if (active) {
+            const updatedHistory = [
+              ...active.messages,
+              { 
+                role: 'jarvis' as const, 
+                text: `**[ATUALIZAÇÃO DE SISTEMA APLICADA COM SUCESSO - V${CURRENT_JARVIS_VERSION}]**\n\n${updateText}` 
+              }
+            ];
+            return prev.map(c => c.id === active.id ? { ...c, messages: updatedHistory } : c);
+          }
+          return prev;
+        });
+
+        // Registrar nova versão
+        localStorage.setItem('jarvis_last_version', CURRENT_JARVIS_VERSION);
+      }
+    };
+
+    triggerUpdateGreeting();
+  }, [activeConversationId]);
+
+  // Função para ler o estado completo de todas as abas locais (Projetos, Finanças, Agenda, Alarmes, Cronogramas) e alimentar o JARVIS
+  const getWorkspaceContext = (): string => {
+    try {
+      const events = localStorage.getItem('stark_events');
+      const timelines = localStorage.getItem('stark_timelines');
+      const alarms = localStorage.getItem('stark_alarms');
+      const txs = localStorage.getItem('stark_demo_transactions');
+      const goals = localStorage.getItem('stark_demo_goals');
+      const projects = localStorage.getItem('stark_projects');
+
+      let ctx = "\n--- CONTEXTO ATUAL DO WORKSPACE LOCAL DE HENRIQUE ---\n";
+      
+      if (projects) {
+        const parsed = JSON.parse(projects);
+        ctx += `\nPROJETOS ATIVOS (${parsed.length}):\n`;
+        parsed.forEach((p: any, i: number) => {
+          ctx += `- ID: "${p.id}" - Projeto: ${p.title} (${p.category || 'Não definida'})\n  Descrição: ${p.description || 'Nenhuma'}\n  Objetivos: ${p.objectives || 'Nenhum'}\n  Recursos: ${p.resources || 'Nenhum'}\n  Prazo: ${p.deadline || 'Não definido'}\n  Progresso/Atualizações: ${p.progress || 'Sem atualizações'}\n`;
+        });
+      } else {
+        ctx += "\nPROJETOS ATIVOS: Nenhum projeto cadastrado ainda no Workspace.\n";
+      }
+
+      if (txs) {
+        const parsed = JSON.parse(txs);
+        const balance = parsed.reduce((acc: number, t: any) => acc + (t.type === 'income' ? t.amount : -t.amount), 0);
+        ctx += `\nFINANÇAS (Saldo total: R$ ${balance.toFixed(2)}):\n`;
+        ctx += `Últimas transações:\n`;
+        parsed.forEach((t: any) => {
+          ctx += `- ID: "${t.id}" - [${t.date}] ${t.type === 'income' ? 'GANHO' : 'GASTO'}: R$ ${t.amount.toFixed(2)} (${t.description}) - Cat: ${t.category}\n`;
+        });
+      }
+
+      if (goals) {
+        const parsed = JSON.parse(goals);
+        ctx += `\nMETAS DE ECONOMIA:\n`;
+        parsed.forEach((g: any) => {
+          ctx += `- ID: "${g.id}" - ${g.title}: Progresso R$ ${Number(g.currentAmount).toFixed(2)} / R$ ${Number(g.targetAmount).toFixed(2)} (Prazo: ${g.deadline || 'Nenhum'})\n`;
+        });
+      }
+
+      if (events) {
+        const parsed = JSON.parse(events);
+        ctx += `\nAGENDA LOCAL / EVENTOS:\n`;
+        parsed.forEach((e: any) => {
+          ctx += `- ID: "${e.id}" - [${e.date} às ${e.time}] ${e.title} (${e.type}) - ${e.description || 'Sem descrição'}\n`;
+        });
+      }
+
+      if (timelines) {
+        const parsed = JSON.parse(timelines);
+        ctx += `\nCRONOGRAMAS DE ESTUDO / APRENDIZADO:\n`;
+        parsed.forEach((tl: any) => {
+          const done = tl.tasks?.filter((t: any) => t.done).length || 0;
+          const total = tl.tasks?.length || 0;
+          ctx += `- ID: "${tl.id}" - ${tl.title} (${tl.topic || 'Geral'}): Progresso ${done}/${total} tarefas concluídas.\n`;
+        });
+      }
+
+      if (alarms) {
+        const parsed = JSON.parse(alarms);
+        ctx += `\nALARMES CONFIGURADOS:\n`;
+        parsed.forEach((a: any) => {
+          ctx += `- ID: "${a.id}" - Horário: ${a.time} - Etiqueta: ${a.label} (${a.active ? 'ATIVO' : 'DESATIVADO'})\n`;
+        });
+      }
+
+      ctx += "\n----------------------------------------------------\n";
+      return ctx;
+    } catch (e) {
+      console.error("Erro ao ler contexto do Workspace para o JARVIS", e);
+      return "";
+    }
+  };
 
   const handleSendMessage = async (e?: React.FormEvent, textOverride?: string) => {
     if (e) e.preventDefault();
@@ -585,12 +705,16 @@ export default function App() {
       })
       .join('\n\n');
 
+    const workspaceContext = getWorkspaceContext();
+
     const context = `Henrique (clebsantos) em sua localização física em tempo real. ${locationContext} Hora local: ${currentTime.toLocaleTimeString()}. ${newsContext}. 
+    
+    ${workspaceContext}
 
-IMPORTANTE: O usuário possui outros canais de conversa históricos gravados abaixo. Você PODE e DEVE acessar estas informações caso ele pergunte ou queira resgatar o que conversaram antes:
-${otherConversationsSummary || 'Nenhum outro canal histórico gravado.'}
+    IMPORTANTE: O usuário possui outros canais de conversa históricos gravados abaixo. Você PODE e DEVE acessar estas informações caso ele pergunte ou queira resgatar o que conversaram antes:
+    ${otherConversationsSummary || 'Nenhum outro canal histórico gravado.'}
 
-Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slice(-5))}`;
+    Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slice(-5))}`;
 
     try {
       const response = await getJarvisResponse(message || "Analise esta imagem, Sir.", context, finalImage || undefined);
@@ -675,6 +799,24 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
     }
     jarvisSpeak(`Entendido, Sir Henrique. Iniciando análise heurística da notícia sobre: ${title}.`);
     handleSendMessage(undefined, `J.A.R.V.I.S., por favor faça uma análise profunda, heurística e estratégica sobre esta notícia recente: "${title}" (publicada por ${source}). Quais são as implicações e o impacto disso para o futuro?`);
+  };
+
+  const handleAskJarvisProject = (project: any) => {
+    if (window.innerWidth < 1024) {
+      setShowWorkspace(false);
+    }
+    jarvisSpeak(`Entendido, Sir Henrique. Acessando os bancos de dados do projeto: ${project.name}.`);
+    handleSendMessage(undefined, `J.A.R.V.I.S., atue como meu Estrategista Neural e Mentor Técnico Sênior. Analise meu projeto "${project.name}" (Status: ${project.category}):
+- Descrição: ${project.description}
+- Objetivos e Metas: ${project.objectives}
+- Recursos e Ferramentas: ${project.resources}
+- Prazo: ${project.deadline}
+- Progresso Atual: ${project.progress}
+
+Por favor, forneça:
+1. Recomendações de ferramentas e recursos inovadores que possam me ajudar a acelerar os resultados.
+2. Análise de possíveis gargalos ou pontos de atenção.
+3. Seu parecer executivo sincero com seu toque clássico de inteligência sofisticada.`);
   };
 
   const getTimeInZone = (offset: number) => {
@@ -865,7 +1007,7 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
         
         {/* Left/Center Column: Chat View */}
         <main className={`flex-1 flex flex-col min-h-0 relative px-4 md:px-6 mt-2 mb-4 transition-all duration-300 ${
-          showWorkspace ? 'w-full lg:w-[60%] xl:w-[65%]' : 'w-full max-w-4xl mx-auto'
+          showWorkspace ? 'w-full lg:w-1/2' : 'w-full max-w-4xl mx-auto'
         }`}>
         
         {/* Scrollable conversation pane */}
@@ -1212,7 +1354,7 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 350, opacity: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed inset-y-0 right-0 z-40 lg:relative lg:inset-auto w-full lg:w-[400px] xl:w-[450px] h-full flex-shrink-0 border-l border-cyan-500/10 bg-[#07090e]/98 backdrop-blur-3xl"
+              className="fixed inset-y-0 right-0 z-40 lg:relative lg:inset-auto w-full lg:w-1/2 h-full flex-shrink-0 border-l border-cyan-500/10 bg-[#07090e]/98 backdrop-blur-3xl shadow-[0_0_50px_rgba(0,0,0,0.8)]"
             >
               <StarkWorkspace 
                 onClose={() => setShowWorkspace(false)} 
@@ -1221,6 +1363,7 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
                 news={news}
                 isLoadingNews={isLoadingNews}
                 onAskJarvisNews={handleAskJarvisNews}
+                onAskJarvisProject={handleAskJarvisProject}
               />
             </motion.div>
           )}
@@ -1269,6 +1412,23 @@ Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slic
               });
             }} 
             tooltip="Notícias Google" 
+          />
+          <DockIcon 
+            icon={<ListTodo size={20} />} 
+            active={showWorkspace && workspaceTab === 'projects'} 
+            onClick={() => {
+              setShowWorkspace(prev => {
+                const next = !prev || workspaceTab !== 'projects';
+                if (next) {
+                  setWorkspaceTab('projects');
+                  jarvisSpeak("Sir Henrique, abrindo o painel exclusivo de Projetos e Diretrizes Stark.");
+                } else {
+                  jarvisSpeak("Painel de Projetos ocultado.");
+                }
+                return next;
+              });
+            }} 
+            tooltip="Projetos Stark" 
           />
           <DockIcon 
             icon={<Smartphone size={20} />} 

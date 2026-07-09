@@ -41,18 +41,8 @@ import {
   GeneratedTaskItem 
 } from '../lib/gemini';
 import { 
-  auth, 
-  initAuth, 
-  googleSignIn, 
-  logout, 
-  getAccessToken 
+  auth
 } from '../lib/firebase';
-import { 
-  fetchGoogleEvents, 
-  createGoogleEvent, 
-  deleteGoogleEvent, 
-  GoogleCalendarEvent 
-} from '../lib/calendar';
 import { 
   getTransactions, 
   addTransaction, 
@@ -81,6 +71,18 @@ interface StarkAlarm {
   active: boolean;
 }
 
+interface StarkProject {
+  id: string;
+  name: string;
+  category: 'andamento' | 'planejamento' | 'concluido' | 'pausa';
+  description: string;
+  objectives: string;
+  resources: string;
+  deadline: string;
+  progress: string;
+  updates: { id: string; date: string; text: string }[];
+}
+
 interface StarkTimeline {
   id: string;
   title: string;
@@ -94,16 +96,18 @@ export default function StarkWorkspace({
   onTabChange,
   news = [],
   isLoadingNews = false,
-  onAskJarvisNews
+  onAskJarvisNews,
+  onAskJarvisProject
 }: { 
   onClose: () => void;
-  activeTab?: 'calendar' | 'time' | 'generator' | 'finance' | 'news';
-  onTabChange?: (tab: 'calendar' | 'time' | 'generator' | 'finance' | 'news') => void;
+  activeTab?: 'calendar' | 'time' | 'generator' | 'finance' | 'news' | 'projects';
+  onTabChange?: (tab: 'calendar' | 'time' | 'generator' | 'finance' | 'news' | 'projects') => void;
   news?: any[];
   isLoadingNews?: boolean;
   onAskJarvisNews?: (title: string, source: string) => void;
+  onAskJarvisProject?: (project: StarkProject) => void;
 }) {
-  const [localActiveTab, setLocalActiveTab] = useState<'calendar' | 'time' | 'generator' | 'finance' | 'news'>('calendar');
+  const [localActiveTab, setLocalActiveTab] = useState<'calendar' | 'time' | 'generator' | 'finance' | 'news' | 'projects'>('calendar');
   const [newsCategoryFilter, setNewsCategoryFilter] = useState('Todos');
   const activeTab = controlledTab !== undefined ? controlledTab : localActiveTab;
   const setActiveTab = onTabChange || setLocalActiveTab;
@@ -111,10 +115,10 @@ export default function StarkWorkspace({
   // ----------------------------------------------------
   // GOOGLE CALENDAR & FIREBASE AUTH & FINANCE STATE
   // ----------------------------------------------------
-  const [googleUser, setGoogleUser] = useState<any>(null);
-  const [googleEvents, setGoogleEvents] = useState<GoogleCalendarEvent[]>([]);
-  const [isSyncingCalendar, setIsSyncingCalendar] = useState(false);
-  const [needsAuth, setNeedsAuth] = useState(true);
+  const [googleUser, setGoogleUser] = useState<any>({ uid: 'demo_user', displayName: 'Henrique (Stark Local)' });
+  const [googleEvents] = useState<any[]>([]);
+  const [isSyncingCalendar] = useState(false);
+  const [needsAuth, setNeedsAuth] = useState(false);
   
   // Finance states
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
@@ -211,6 +215,150 @@ export default function StarkWorkspace({
   const alarmBeeperRef = useRef<NodeJS.Timeout | null>(null);
 
   // ----------------------------------------------------
+  // PROJETOS STATE
+  // ----------------------------------------------------
+  const [projects, setProjects] = useState<StarkProject[]>(() => {
+    const saved = localStorage.getItem('stark_projects');
+    if (saved) return JSON.parse(saved);
+    return [
+      {
+        id: 'proj1',
+        name: 'Assistente Neural J.A.R.V.I.S.',
+        category: 'andamento',
+        description: 'Desenvolvimento e refinamento contínuo dos córtexes cognitivo, visual e de voz do J.A.R.V.I.S. para servir como o centro de comando definitivo.',
+        objectives: 'Alcançar latência ultra-baixa em respostas por voz, integrar automações com Google Cloud, e refinar percepção do córtex óptico.',
+        resources: 'React 18, Vite, Tailwind CSS, API do Gemini, Firebase, Groq API, Lucide Icons.',
+        deadline: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        progress: 'Córtex visual e financeiro estabilizados com banco de dados na nuvem. Síntese de voz neural ativa.',
+        updates: [
+          { id: 'up1', date: '2026-07-06', text: 'Sincronização com Firestore e Google Agenda concluída.' },
+          { id: 'up2', date: '2026-07-09', text: 'Desenvolvimento do novo painel de controle de projetos iniciado.' }
+        ]
+      },
+      {
+        id: 'proj2',
+        name: 'Metas Patrimoniais de Longo Prazo',
+        category: 'planejamento',
+        description: 'Planejar a alocação de ativos e investimentos baseados nas diretrizes do CFO J.A.R.V.I.S. para criação rápida de riqueza.',
+        objectives: 'Estabelecer uma taxa de economia constante acima de 20%, criar um fundo de liquidez de 6 meses e parametrizar metas no Firestore.',
+        resources: 'Finance Tracker do J.A.R.V.I.S., Planilhas Financeiras, Plataforma de Investimentos.',
+        deadline: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        progress: 'Em fase de estruturação e diagnóstico financeiro de entradas e saídas.',
+        updates: []
+      }
+    ];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('stark_projects', JSON.stringify(projects));
+  }, [projects]);
+
+  const [showAddProject, setShowAddProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectCategory, setNewProjectCategory] = useState<'andamento' | 'planejamento' | 'concluido' | 'pausa'>('andamento');
+  const [newProjectDescription, setNewProjectDescription] = useState('');
+  const [newProjectObjectives, setNewProjectObjectives] = useState('');
+  const [newProjectResources, setNewProjectResources] = useState('');
+  const [newProjectDeadline, setNewProjectDeadline] = useState('');
+  const [newProjectProgress, setNewProjectProgress] = useState('');
+
+  const [projectFilter, setProjectFilter] = useState<'Todos' | 'andamento' | 'planejamento' | 'concluido' | 'pausa'>('Todos');
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  
+  const [editProjectName, setEditProjectName] = useState('');
+  const [editProjectCategory, setEditProjectCategory] = useState<'andamento' | 'planejamento' | 'concluido' | 'pausa'>('andamento');
+  const [editProjectDescription, setEditProjectDescription] = useState('');
+  const [editProjectObjectives, setEditProjectObjectives] = useState('');
+  const [editProjectResources, setEditProjectResources] = useState('');
+  const [editProjectDeadline, setEditProjectDeadline] = useState('');
+  const [editProjectProgress, setEditProjectProgress] = useState('');
+
+  const [newUpdateText, setNewUpdateText] = useState<{ [projectId: string]: string }>({});
+  const [expandedProjects, setExpandedProjects] = useState<{ [id: string]: boolean }>({ 'proj1': true });
+
+  const handleAddProject = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProjectName.trim()) return;
+    const newProj: StarkProject = {
+      id: 'proj_' + Date.now(),
+      name: newProjectName,
+      category: newProjectCategory,
+      description: newProjectDescription,
+      objectives: newProjectObjectives,
+      resources: newProjectResources,
+      deadline: newProjectDeadline || new Date().toISOString().split('T')[0],
+      progress: newProjectProgress || 'Iniciado recentemente.',
+      updates: []
+    };
+    setProjects(prev => [newProj, ...prev]);
+    // Reset fields
+    setNewProjectName('');
+    setNewProjectCategory('andamento');
+    setNewProjectDescription('');
+    setNewProjectObjectives('');
+    setNewProjectResources('');
+    setNewProjectDeadline('');
+    setNewProjectProgress('');
+    setShowAddProject(false);
+  };
+
+  const handleStartEditProject = (p: StarkProject) => {
+    setEditingProjectId(p.id);
+    setEditProjectName(p.name);
+    setEditProjectCategory(p.category);
+    setEditProjectDescription(p.description);
+    setEditProjectObjectives(p.objectives);
+    setEditProjectResources(p.resources);
+    setEditProjectDeadline(p.deadline);
+    setEditProjectProgress(p.progress);
+  };
+
+  const handleSaveEditProject = (id: string) => {
+    setProjects(prev => prev.map(p => p.id === id ? {
+      ...p,
+      name: editProjectName,
+      category: editProjectCategory,
+      description: editProjectDescription,
+      objectives: editProjectObjectives,
+      resources: editProjectResources,
+      deadline: editProjectDeadline,
+      progress: editProjectProgress
+    } : p));
+    setEditingProjectId(null);
+  };
+
+  const handleAddProjectUpdate = (projectId: string) => {
+    const text = newUpdateText[projectId] || '';
+    if (!text.trim()) return;
+    const newLog = {
+      id: 'up_' + Date.now(),
+      date: new Date().toISOString().split('T')[0],
+      text: text.trim()
+    };
+    setProjects(prev => prev.map(p => {
+      if (p.id === projectId) {
+        return {
+          ...p,
+          updates: [newLog, ...p.updates]
+        };
+      }
+      return p;
+    }));
+    setNewUpdateText(prev => ({ ...prev, [projectId]: '' }));
+  };
+
+  const handleDeleteProject = (id: string) => {
+    setProjects(prev => prev.filter(p => p.id !== id));
+  };
+
+  const toggleProjectExpand = (id: string) => {
+    setExpandedProjects(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
+  };
+
+  // ----------------------------------------------------
   // SIMULADOS / TAREFAS AI GENERATOR STATE
   // ----------------------------------------------------
   const [topicInput, setTopicInput] = useState('');
@@ -249,28 +397,16 @@ export default function StarkWorkspace({
   const fetchFinanceAndCalendar = async (user: any) => {
     setIsFinancesLoading(true);
     try {
-      const txs = await getTransactions(user.uid);
+      const uid = user?.uid || 'demo_user';
+      const txs = await getTransactions(uid);
       setTransactions(txs);
       
-      const gls = await getGoals(user.uid);
+      const gls = await getGoals(uid);
       setGoals(gls);
     } catch (e) {
-      console.error("Firestore loading error:", e);
+      console.error("Local finance loading error:", e);
     } finally {
       setIsFinancesLoading(false);
-    }
-
-    const token = await getAccessToken();
-    if (token) {
-      setIsSyncingCalendar(true);
-      try {
-        const eventsList = await fetchGoogleEvents(token);
-        setGoogleEvents(eventsList);
-      } catch (err) {
-        console.error("Google Calendar loading error:", err);
-      } finally {
-        setIsSyncingCalendar(false);
-      }
     }
   };
 
@@ -285,6 +421,9 @@ export default function StarkWorkspace({
       const savedAlarms = localStorage.getItem('stark_alarms');
       if (savedAlarms) setAlarms(JSON.parse(savedAlarms));
 
+      const savedProjects = localStorage.getItem('stark_projects');
+      if (savedProjects) setProjects(JSON.parse(savedProjects));
+
       const savedGeneratedContent = localStorage.getItem('stark_generated_content');
       if (savedGeneratedContent) {
         setGeneratedContent(JSON.parse(savedGeneratedContent));
@@ -294,7 +433,7 @@ export default function StarkWorkspace({
 
       // Troca automática de abas se requisitado pelo J.A.R.V.I.S
       const requestedTab = localStorage.getItem('stark_requested_tab');
-      if (requestedTab === 'calendar' || requestedTab === 'time' || requestedTab === 'generator' || requestedTab === 'finance' || requestedTab === 'news') {
+      if (requestedTab === 'calendar' || requestedTab === 'time' || requestedTab === 'generator' || requestedTab === 'finance' || requestedTab === 'news' || requestedTab === 'projects') {
         setActiveTab(requestedTab as any);
         localStorage.removeItem('stark_requested_tab');
       }
@@ -311,46 +450,15 @@ export default function StarkWorkspace({
   }, []);
 
   useEffect(() => {
-    const unsubscribe = initAuth(
-      async (user, token) => {
-        setGoogleUser(user);
-        setNeedsAuth(false);
-        fetchFinanceAndCalendar(user);
-      },
-      () => {
-        setGoogleUser(null);
-        setNeedsAuth(true);
-        setTransactions([]);
-        setGoals([]);
-        setGoogleEvents([]);
-      }
-    );
-    return () => unsubscribe();
+    fetchFinanceAndCalendar({ uid: 'demo_user' });
   }, []);
 
   const handleGoogleSignIn = async () => {
-    try {
-      const res = await googleSignIn();
-      if (res) {
-        setGoogleUser(res.user);
-        setNeedsAuth(false);
-        jarvisSpeak("Autenticação biométrica concluída no satélite Google, Sir Henrique. Seus dados financeiros e agenda estão sincronizados.");
-        fetchFinanceAndCalendar(res.user);
-      } else {
-        jarvisSpeak("Sinalização cancelada pelo usuário, Sir Henrique.");
-      }
-    } catch (err) {
-      console.error("Manual sign in error:", err);
-    }
+    jarvisSpeak("Modo local ativo, Sir Henrique. Não há necessidade de sincronização em nuvem.");
   };
 
   const handleLogout = async () => {
-    try {
-      await logout();
-      jarvisSpeak("Sessão de segurança finalizada com sucesso, Sir Henrique.");
-    } catch (err) {
-      console.error("Logout error:", err);
-    }
+    jarvisSpeak("Não é possível fechar sessão em modo local restrito, Sir Henrique.");
   };
 
   // Suporte para o J.A.R.V.I.S disparar a geração de simulados ou tarefas de forma autônoma
@@ -487,25 +595,7 @@ export default function StarkWorkspace({
     setNewEventTitle('');
     setNewEventDesc('');
 
-    const token = await getAccessToken();
-    if (token) {
-      try {
-        await createGoogleEvent(token, {
-          title: newEventTitle,
-          date: newEventDate,
-          time: newEventTime,
-          description: newEventDesc || "Criado via Stark Workspace"
-        });
-        const list = await fetchGoogleEvents(token);
-        setGoogleEvents(list);
-        jarvisSpeak(`Compromisso agendado com sucesso e sincronizado no seu Google Agenda real, Sir.`);
-      } catch (err) {
-        console.error("Failed to auto-sync to Google Calendar:", err);
-        jarvisSpeak(`Compromisso agendado localmente, Sir. Houve um problema ao sincronizar com o Google.`);
-      }
-    } else {
-      jarvisSpeak(`Compromisso agendado com sucesso, Sir Henrique.`);
-    }
+    jarvisSpeak(`Compromisso agendado com sucesso, Sir Henrique.`);
   };
 
   const handleDeleteEvent = (id: string) => {
@@ -1030,45 +1120,39 @@ export default function StarkWorkspace({
           <Globe size={13} className="flex-shrink-0" />
           <span>Notícias<span className="hidden sm:inline"> Google</span></span>
         </button>
+        <button
+          onClick={() => setActiveTab('projects')}
+          className={`flex-1 flex-shrink-0 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-[10px] md:text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
+            activeTab === 'projects' 
+              ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_10px_rgba(6,182,212,0.1)] font-mono' 
+              : 'text-white/40 hover:text-white/70 hover:bg-white/[0.02]'
+          }`}
+        >
+          <ListTodo size={13} className="flex-shrink-0" />
+          <span>Projetos<span className="hidden sm:inline"> Stark</span></span>
+        </button>
 
-        {/* Close Button for Responsive Mobile layout */}
+        {/* Close Button */}
         <button 
           onClick={onClose}
-          className="lg:hidden p-2 text-white/40 hover:text-white bg-white/5 rounded-lg"
+          className="p-2 text-white/40 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-all duration-300 flex items-center justify-center cursor-pointer"
+          title="Fechar painel"
         >
           <X size={14} />
         </button>
       </div>
 
-      {/* Neural Link / Google Cloud Connection Status */}
+      {/* Neural Link / Local Brain Status */}
       <div className="bg-black/30 px-4 py-2 flex items-center justify-between border-b border-white/5 text-[11px] font-mono">
         <div className="flex items-center gap-2">
-          <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${googleUser ? 'bg-emerald-500' : 'bg-amber-500'}`}></div>
-          <span className="text-white/50">Google Cloud Sync:</span>
-          {googleUser ? (
-            <span className="text-emerald-400 font-semibold">{googleUser.displayName || 'Ativado'}</span>
-          ) : (
-            <span className="text-amber-400 font-semibold">Offline</span>
-          )}
+          <div className="w-1.5 h-1.5 rounded-full animate-pulse bg-cyan-400"></div>
+          <span className="text-white/50">J.A.R.V.I.S. Core Brain:</span>
+          <span className="text-cyan-400 font-semibold">Offline Local Ativo</span>
         </div>
-        {googleUser ? (
-          <button 
-            onClick={handleLogout} 
-            className="text-white/40 hover:text-rose-400 flex items-center gap-1 transition-colors duration-200"
-            title="Desconectar do Google"
-          >
-            <LogOut size={11} />
-            <span>Sair</span>
-          </button>
-        ) : (
-          <button 
-            onClick={handleGoogleSignIn} 
-            className="text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 transition-colors duration-200"
-          >
-            <RefreshCw size={11} className="animate-spin" style={{ animationDuration: '4s' }} />
-            <span>Conectar Google</span>
-          </button>
-        )}
+        <div className="text-white/40 flex items-center gap-1">
+          <Sparkles size={11} className="text-cyan-400" />
+          <span>Sistemas Locais Estabilizados</span>
+        </div>
       </div>
 
       {/* Tab Panels Scrollable Area */}
@@ -1188,93 +1272,7 @@ export default function StarkWorkspace({
               </div>
             </div>
 
-            {/* List of Google Calendar Events */}
-            {googleUser && (
-              <div className="space-y-2 mt-4 border-t border-white/5 pt-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest font-mono flex items-center gap-1.5">
-                    <RefreshCw size={10} className={isSyncingCalendar ? "animate-spin" : ""} />
-                    Google Agenda Sincronizada ({googleEvents.length})
-                  </h3>
-                  <button 
-                    type="button"
-                    onClick={async () => {
-                      const token = await getAccessToken();
-                      if (token) {
-                        setIsSyncingCalendar(true);
-                        try {
-                          const list = await fetchGoogleEvents(token);
-                          setGoogleEvents(list);
-                        } catch (err) { console.error(err); }
-                        finally { setIsSyncingCalendar(false); }
-                      }
-                    }}
-                    className="text-[9px] text-white/40 hover:text-cyan-400 transition-colors font-mono cursor-pointer"
-                  >
-                    ATUALIZAR
-                  </button>
-                </div>
-                <div className="space-y-2 max-h-[190px] overflow-y-auto pr-1">
-                  {isSyncingCalendar ? (
-                    <div className="text-center py-4 text-[10px] text-white/30 italic">
-                      Sincronizando com o Google...
-                    </div>
-                  ) : googleEvents.length === 0 ? (
-                    <div className="text-center py-4 bg-white/[0.01] rounded-xl border border-dashed border-white/5 text-[10px] text-white/30 italic">
-                      Nenhum compromisso encontrado no Google Agenda.
-                    </div>
-                  ) : (
-                    googleEvents.map(ev => {
-                      const eventDate = ev.start?.dateTime 
-                        ? new Date(ev.start.dateTime) 
-                        : ev.start?.date 
-                          ? new Date(ev.start.date + 'T00:00:00')
-                          : new Date();
-                      const timeStr = ev.start?.dateTime
-                        ? new Date(ev.start.dateTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-                        : "Dia todo";
-                      return (
-                        <div key={ev.id} className="bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-3 flex items-start justify-between gap-3 shadow-sm hover:border-emerald-500/20 transition-colors">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-[8px] font-bold font-mono px-1.5 py-0.5 rounded uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/10">
-                                Google Calendar
-                              </span>
-                              <span className="text-[10px] font-mono text-emerald-400 font-bold">{timeStr}</span>
-                            </div>
-                            <h4 className="text-xs font-bold text-white/95 mt-1 truncate">{ev.summary}</h4>
-                            <p className="text-[9px] text-white/30 font-mono mt-0.5">
-                              {eventDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
-                            </p>
-                            {ev.description && (
-                              <p className="text-[9px] text-white/40 mt-1 line-clamp-1">{ev.description}</p>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const token = await getAccessToken();
-                              if (token && ev.id) {
-                                try {
-                                  await deleteGoogleEvent(token, ev.id);
-                                  setGoogleEvents(prev => prev.filter(item => item.id !== ev.id));
-                                  jarvisSpeak("Compromisso removido da sua agenda Google, Sir.");
-                                } catch (err) {
-                                  console.error(err);
-                                }
-                              }
-                            }}
-                            className="text-white/20 hover:text-rose-400 transition-colors p-1.5 hover:bg-white/5 rounded-lg cursor-pointer"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            )}
+            {/* Google Calendar Sincronização Desativada em favor do Local Agenda */}
 
             {/* Cronogramas / Planners Segment */}
             <div className="border-t border-white/5 pt-5 space-y-4">
@@ -1884,7 +1882,7 @@ export default function StarkWorkspace({
                     return (
                       <div className="space-y-5 animate-fadeIn">
                         {/* Executive Summary Cards */}
-                        <div className="grid grid-cols-3 gap-2.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                           <div className="bg-white/[0.01] border border-white/5 rounded-xl p-3 space-y-1 relative overflow-hidden">
                             <div className="absolute right-1 top-1 text-white/[0.02]"><Wallet size={24} /></div>
                             <span className="text-[7.5px] font-bold text-white/30 uppercase tracking-widest font-mono">Saldo Geral</span>
@@ -2161,7 +2159,6 @@ export default function StarkWorkspace({
                                         <button
                                           type="button"
                                           onClick={async () => {
-                                            if (!confirm("Excluir lançamento permanentemente?")) return;
                                             try {
                                               await deleteTransaction(t.id);
                                               jarvisSpeak("Registro removido Sir.");
@@ -2536,7 +2533,6 @@ export default function StarkWorkspace({
                                       <button
                                         type="button"
                                         onClick={async () => {
-                                          if (!confirm(`Deseja excluir a meta "${g.title}" permanentemente?`)) return;
                                           try {
                                             await deleteGoal(g.id);
                                             jarvisSpeak("Meta financeira removida Sir.");
@@ -2620,9 +2616,9 @@ export default function StarkWorkspace({
             </div>
 
             {/* News Stream */}
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
               {isLoadingNews ? (
-                <div className="flex flex-col items-center justify-center py-12 space-y-3">
+                <div className="col-span-full flex flex-col items-center justify-center py-12 space-y-3">
                   <div className="w-6 h-6 border-2 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin" />
                   <p className="text-[10px] text-white/30 uppercase tracking-widest font-mono">
                     Sincronizando feed mundial...
@@ -2632,7 +2628,7 @@ export default function StarkWorkspace({
                 if (newsCategoryFilter === 'Todos') return true;
                 return (item.category || '').toLowerCase().includes(newsCategoryFilter.toLowerCase());
               }).length === 0 ? (
-                <div className="text-center py-10 bg-white/[0.01] rounded-2xl border border-dashed border-white/5 text-xs text-white/30 italic">
+                <div className="col-span-full text-center py-10 bg-white/[0.01] rounded-2xl border border-dashed border-white/5 text-xs text-white/30 italic">
                   Nenhuma manchete correspondente encontrada.
                 </div>
               ) : (
@@ -2705,6 +2701,545 @@ export default function StarkWorkspace({
                           </a>
                         )}
                       </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: PROJECTS PANEL */}
+        {activeTab === 'projects' && (
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 animate-fadeIn scrollbar-none">
+            {/* Header / Brand */}
+            <div className="bg-gradient-to-r from-cyan-500/10 to-blue-500/5 border border-cyan-500/10 rounded-2xl p-4 relative overflow-hidden">
+              <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-cyan-500/5 rounded-full blur-xl pointer-events-none" />
+              <div className="flex items-center gap-2 mb-1">
+                <ListTodo className="text-cyan-400" size={16} />
+                <h2 className="text-xs font-semibold tracking-widest text-cyan-400 font-mono uppercase">
+                  SISTEMA DE PROJETOS E DIRETRIZES
+                </h2>
+              </div>
+              <p className="text-[10px] text-white/40 uppercase tracking-wider font-semibold font-mono">
+                Mapeamento Cognitivo de Iniciativas de Alta Relevância
+              </p>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onAskJarvisProject) {
+                      const allProjsSummary = projects.map(p => `- ${p.name} (${p.category.toUpperCase()})`).join('\n');
+                      const project = {
+                        name: "Visão Geral de Todos os Meus Projetos",
+                        category: "andamento",
+                        description: `Sintetizar o andamento das iniciativas atuais:\n${allProjsSummary}`,
+                        objectives: "Garantir consistência estratégica e otimização de tempo em todas as frentes.",
+                        resources: "Todos os listados no dashboard.",
+                        deadline: "Consolidado Geral",
+                        progress: "Múltiplos projetos ativos e planejados cadastrados no terminal."
+                      };
+                      onAskJarvisProject(project as any);
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 hover:text-white border border-cyan-500/15 rounded-xl text-[9px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Sparkles size={11} />
+                  <span>Consultar J.A.R.V.I.S. Geral</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Category Filter Buttons */}
+            <div className="flex items-center gap-1 overflow-x-auto scrollbar-none pb-1">
+              {(['Todos', 'andamento', 'planejamento', 'concluido', 'pausa'] as const).map(cat => {
+                const isActive = projectFilter === cat;
+                let label = cat === 'Todos' ? 'Todos' : 
+                            cat === 'andamento' ? 'Em Andamento' : 
+                            cat === 'planejamento' ? 'Planejamento' :
+                            cat === 'concluido' ? 'Concluídos' : 'Em Pausa';
+                let activeStyle = 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20';
+                if (cat === 'concluido') activeStyle = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+                
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setProjectFilter(cat)}
+                    className={`flex-shrink-0 px-2.5 py-1.5 rounded-xl text-[9px] font-mono font-semibold uppercase tracking-wider border transition-all cursor-pointer ${
+                      isActive 
+                        ? activeStyle + ' shadow-[0_0_10px_rgba(6,182,212,0.05)]' 
+                        : 'bg-white/[0.01] border-white/5 hover:border-white/10 text-white/40'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Toggle Add Project Form button */}
+            {!showAddProject && (
+              <button
+                type="button"
+                onClick={() => setShowAddProject(true)}
+                className="w-full py-3 bg-white/[0.01] hover:bg-cyan-500/5 text-white/70 hover:text-cyan-400 border border-dashed border-white/5 hover:border-cyan-500/20 rounded-2xl text-[10px] md:text-xs font-mono font-bold tracking-widest uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Plus size={14} />
+                <span>Cadastrar Nova Iniciativa</span>
+              </button>
+            )}
+
+            {/* Add Project Modal */}
+            {showAddProject && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
+                <div className="absolute inset-0 cursor-pointer" onClick={() => setShowAddProject(false)} />
+                <form 
+                  onSubmit={handleAddProject}
+                  className="relative w-full max-w-lg bg-[#07090e] border border-cyan-500/30 rounded-2xl p-5 space-y-4 shadow-[0_0_50px_rgba(6,182,212,0.15)] animate-scaleUp max-h-[90vh] overflow-y-auto scrollbar-none"
+                >
+                  <div className="flex justify-between items-center pb-2 border-b border-white/5">
+                    <span className="text-xs font-bold tracking-widest text-cyan-400 font-mono uppercase flex items-center gap-2">
+                      <ListTodo size={14} className="text-cyan-400" />
+                      NOVA COGNIÇÃO DE PROJETO
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddProject(false)}
+                      className="p-1 hover:bg-white/5 text-white/40 hover:text-white rounded-lg transition-colors cursor-pointer"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-white/40 font-mono uppercase tracking-wider block">
+                      Nome do Projeto / Iniciativa
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="E.g., Novo Hub de Integrações API"
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/95 focus:outline-none focus:border-cyan-500/30 font-sans"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold text-white/40 font-mono uppercase tracking-wider block">
+                        Prioridade / Status
+                      </label>
+                      <select
+                        value={newProjectCategory}
+                        onChange={(e: any) => setNewProjectCategory(e.target.value)}
+                        className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-2 py-2 text-xs text-white/95 focus:outline-none focus:border-cyan-500/30 font-mono"
+                      >
+                        <option value="andamento">Em Andamento</option>
+                        <option value="planejamento">Planejamento</option>
+                        <option value="concluido">Concluído</option>
+                        <option value="pausa">Em Pausa</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold text-white/40 font-mono uppercase tracking-wider block">
+                        Prazo / Cronograma
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={newProjectDeadline}
+                        onChange={(e) => setNewProjectDeadline(e.target.value)}
+                        className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-2 py-1.5 text-xs text-white/95 focus:outline-none focus:border-cyan-500/30 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-white/40 font-mono uppercase tracking-wider block">
+                      Descrição do Projeto
+                    </label>
+                    <textarea
+                      rows={2}
+                      required
+                      placeholder="Visão abrangente e escopo executivo do projeto..."
+                      value={newProjectDescription}
+                      onChange={(e) => setNewProjectDescription(e.target.value)}
+                      className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/95 focus:outline-none focus:border-cyan-500/30 font-sans resize-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-white/40 font-mono uppercase tracking-wider block">
+                      Objetivos e Metas
+                    </label>
+                    <textarea
+                      rows={2}
+                      required
+                      placeholder="E.g., Reduzir latência, consolidar vendas, automatizar tarefas..."
+                      value={newProjectObjectives}
+                      onChange={(e) => setNewProjectObjectives(e.target.value)}
+                      className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/95 focus:outline-none focus:border-cyan-500/30 font-sans resize-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-white/40 font-mono uppercase tracking-wider block">
+                      Recursos e Ferramentas Necessários
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="E.g., React, Firebase, OpenAI API, AWS Lambda..."
+                      value={newProjectResources}
+                      onChange={(e) => setNewProjectResources(e.target.value)}
+                      className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/95 focus:outline-none focus:border-cyan-500/30 font-sans"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-white/40 font-mono uppercase tracking-wider block">
+                      Progresso e Atualização Inicial
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="E.g., Escopo técnico definido, pronto para desenvolvimento"
+                      value={newProjectProgress}
+                      onChange={(e) => setNewProjectProgress(e.target.value)}
+                      className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-3 py-2 text-xs text-white/95 focus:outline-none focus:border-cyan-500/30 font-sans"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="submit"
+                      className="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)] cursor-pointer"
+                    >
+                      <Check size={12} />
+                      <span>Salvar Projeto</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddProject(false)}
+                      className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white/60 text-xs rounded-xl flex items-center justify-center transition-all cursor-pointer"
+                    >
+                      <span>Cancelar</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Projects List */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {projects.filter(p => {
+                if (projectFilter === 'Todos') return true;
+                return p.category === projectFilter;
+              }).length === 0 ? (
+                <div className="col-span-full text-center py-12 bg-white/[0.01] rounded-2xl border border-dashed border-white/5 text-xs text-white/30 italic space-y-1">
+                  <p>Nenhuma iniciativa mapeada nesta categoria.</p>
+                  <p className="text-[10px] text-white/20">Sir, sinta-se à vontade para cadastrar um novo projeto.</p>
+                </div>
+              ) : (
+                projects.filter(p => {
+                  if (projectFilter === 'Todos') return true;
+                  return p.category === projectFilter;
+                }).map(p => {
+                  const isExpanded = expandedProjects[p.id];
+                  const isEditing = editingProjectId === p.id;
+                  
+                  // Color indicators
+                  let catColor = 'text-cyan-400 border-cyan-500/20 bg-cyan-500/5';
+                  let catLabel = 'Em Andamento';
+                  if (p.category === 'planejamento') {
+                    catColor = 'text-yellow-400 border-yellow-500/20 bg-yellow-500/5';
+                    catLabel = 'Em Planejamento';
+                  } else if (p.category === 'concluido') {
+                    catColor = 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5';
+                    catLabel = 'Concluído';
+                  } else if (p.category === 'pausa') {
+                    catColor = 'text-red-400 border-red-500/20 bg-red-500/5';
+                    catLabel = 'Em Pausa';
+                  }
+
+                  return (
+                    <div 
+                      key={p.id}
+                      className={`relative overflow-hidden bg-white/[0.01] border ${
+                        isExpanded ? 'border-white/10 bg-black/20' : 'border-white/5 hover:border-white/10'
+                      } rounded-2xl p-4 transition-all duration-300 space-y-3.5`}
+                    >
+                      {/* Top bar */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1 cursor-pointer flex-1" onClick={() => toggleProjectExpand(p.id)}>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[8px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded border ${catColor}`}>
+                              {catLabel}
+                            </span>
+                            <span className="text-[9px] font-mono text-white/40">
+                              Prazo: {p.deadline}
+                            </span>
+                          </div>
+                          <h3 className="text-xs md:text-[13px] font-bold text-white/90 tracking-wide hover:text-cyan-400 transition-colors">
+                            {p.name}
+                          </h3>
+                        </div>
+
+                        {/* Expand & Delete actions */}
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => toggleProjectExpand(p.id)}
+                            className="p-1.5 bg-white/[0.02] hover:bg-white/[0.08] text-white/40 hover:text-white rounded-lg transition-colors cursor-pointer"
+                            title={isExpanded ? "Contrair" : "Expandir Detalhes"}
+                          >
+                            <ChevronRight 
+                              size={12} 
+                              className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`} 
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteProject(p.id)}
+                            className="p-1.5 bg-white/[0.02] hover:bg-red-500/10 text-white/40 hover:text-red-400 rounded-lg transition-colors cursor-pointer"
+                            title="Deletar Projeto"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Expanded Panel Details */}
+                      {isExpanded && (
+                        <div className="space-y-3.5 pt-3.5 border-t border-white/5 animate-fadeIn">
+                          {isEditing ? (
+                            /* Inline editing form */
+                            <div className="space-y-3 text-xs">
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-white/40 font-mono uppercase block">
+                                  Nome da Iniciativa
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editProjectName}
+                                  onChange={(e) => setEditProjectName(e.target.value)}
+                                  className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white/90 focus:outline-none"
+                                />
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-white/40 font-mono uppercase block">
+                                    Status
+                                  </label>
+                                  <select
+                                    value={editProjectCategory}
+                                    onChange={(e: any) => setEditProjectCategory(e.target.value)}
+                                    className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-1.5 py-1 text-xs text-white/90 focus:outline-none"
+                                  >
+                                    <option value="andamento">Em Andamento</option>
+                                    <option value="planejamento">Planejamento</option>
+                                    <option value="concluido">Concluído</option>
+                                    <option value="pausa">Em Pausa</option>
+                                  </select>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold text-white/40 font-mono uppercase block">
+                                    Prazo
+                                  </label>
+                                  <input
+                                    type="date"
+                                    value={editProjectDeadline}
+                                    onChange={(e) => setEditProjectDeadline(e.target.value)}
+                                    className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-1.5 py-1 text-xs text-white/90 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-white/40 font-mono uppercase block">
+                                  Descrição
+                                </label>
+                                <textarea
+                                  rows={2}
+                                  value={editProjectDescription}
+                                  onChange={(e) => setEditProjectDescription(e.target.value)}
+                                  className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white/90 focus:outline-none resize-none"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-white/40 font-mono uppercase block">
+                                  Objetivos e Metas
+                                </label>
+                                <textarea
+                                  rows={2}
+                                  value={editProjectObjectives}
+                                  onChange={(e) => setEditProjectObjectives(e.target.value)}
+                                  className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white/90 focus:outline-none resize-none"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-white/40 font-mono uppercase block">
+                                  Recursos e Ferramentas
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editProjectResources}
+                                  onChange={(e) => setEditProjectResources(e.target.value)}
+                                  className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white/90 focus:outline-none"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-white/40 font-mono uppercase block">
+                                  Progresso Atual
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editProjectProgress}
+                                  onChange={(e) => setEditProjectProgress(e.target.value)}
+                                  className="w-full bg-[#0a0d14] border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white/90 focus:outline-none"
+                                />
+                              </div>
+
+                              <div className="flex items-center gap-1.5 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveEditProject(p.id)}
+                                  className="flex-1 py-1.5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded-xl text-[10px] uppercase font-mono tracking-wider cursor-pointer"
+                                >
+                                  Confirmar Alterações
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingProjectId(null)}
+                                  className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 rounded-xl text-[10px] uppercase font-mono tracking-wider cursor-pointer"
+                                >
+                                  Descartar
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* Regular details view */
+                            <div className="space-y-3">
+                              {/* 1. Descrição */}
+                              <div className="space-y-0.5">
+                                <span className="text-[9px] font-mono font-bold text-white/30 uppercase tracking-widest">
+                                  Descrição do Projeto
+                                </span>
+                                <p className="text-xs text-white/70 leading-relaxed font-sans">
+                                  {p.description}
+                                </p>
+                              </div>
+
+                              {/* 2. Objetivos e metas */}
+                              <div className="space-y-0.5">
+                                <span className="text-[9px] font-mono font-bold text-white/30 uppercase tracking-widest">
+                                  Objetivos & Metas
+                                </span>
+                                <p className="text-xs text-white/70 leading-relaxed font-sans">
+                                  {p.objectives}
+                                </p>
+                              </div>
+
+                              {/* 3. Recursos e ferramentas */}
+                              <div className="space-y-1">
+                                <span className="text-[9px] font-mono font-bold text-white/30 uppercase tracking-widest block">
+                                  Recursos & Ferramentas
+                                </span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {(p.resources || '').split(',').map((r, i) => (
+                                    <span 
+                                      key={i} 
+                                      className="text-[9px] font-mono bg-white/[0.03] border border-white/5 text-cyan-300 px-2 py-0.5 rounded-lg"
+                                    >
+                                      {r.trim()}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* 4. Progresso e Atualizações */}
+                              <div className="space-y-0.5">
+                                <span className="text-[9px] font-mono font-bold text-white/30 uppercase tracking-widest">
+                                  Progresso Atual
+                                </span>
+                                <p className="text-xs text-cyan-300 font-sans leading-relaxed">
+                                  {p.progress}
+                                </p>
+                              </div>
+
+                              {/* J.A.R.V.I.S. Actions */}
+                              <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-white/5">
+                                {onAskJarvisProject && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onAskJarvisProject(p)}
+                                    className="px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 hover:text-white border border-cyan-500/15 rounded-xl text-[9px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Sparkles size={11} />
+                                    <span>Consultar J.A.R.V.I.S.</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditProject(p)}
+                                  className="px-3 py-1.5 bg-white/[0.02] hover:bg-white/[0.06] text-white/60 hover:text-white border border-white/5 rounded-xl text-[9px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Edit2 size={10} />
+                                  <span>Editar Detalhes</span>
+                                </button>
+                              </div>
+
+                              {/* Log de Atualizações - Real-time appending feed */}
+                              <div className="space-y-2 pt-3 border-t border-white/5">
+                                <span className="text-[9px] font-mono font-bold text-white/30 uppercase tracking-widest block">
+                                  Histórico de Progresso & Logs ({p.updates.length})
+                                </span>
+
+                                {/* Quick update box */}
+                                <div className="flex gap-1.5">
+                                  <input
+                                    type="text"
+                                    placeholder="Nova atualização técnica de progresso..."
+                                    value={newUpdateText[p.id] || ''}
+                                    onChange={(e) => setNewUpdateText(prev => ({ ...prev, [p.id]: e.target.value }))}
+                                    className="flex-1 bg-black/50 border border-white/10 rounded-xl px-2.5 py-1 text-xs text-white/90 focus:outline-none focus:border-cyan-500/20"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleAddProjectUpdate(p.id);
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAddProjectUpdate(p.id)}
+                                    className="px-3 py-1 bg-cyan-500 hover:bg-cyan-400 text-black text-[10px] font-mono font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                                  >
+                                    Log
+                                  </button>
+                                </div>
+
+                                {/* Feed list */}
+                                {p.updates.length > 0 && (
+                                  <div className="space-y-2 max-h-[140px] overflow-y-auto scrollbar-none pr-0.5 pt-1.5">
+                                    {p.updates.map(log => (
+                                      <div key={log.id} className="text-[10px] leading-relaxed bg-[#0a0d14]/30 border border-white/[0.02] p-2 rounded-xl space-y-0.5">
+                                        <span className="font-mono text-cyan-500 block text-[8px] font-semibold">
+                                          [{log.date}] PROTOCOLO DE LOG ATIVO
+                                        </span>
+                                        <p className="text-white/70">{log.text}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })
