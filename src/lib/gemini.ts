@@ -1158,6 +1158,32 @@ function speakWithSpeechSynthesis(sentence: string, mySpeechId?: number): Promis
   });
 }
 
+export let globalAudioContext: AudioContext | null = null;
+
+export function initGlobalAudioContext() {
+  if (typeof window === 'undefined') return;
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!globalAudioContext && AudioContextClass) {
+      globalAudioContext = new AudioContextClass();
+    }
+    if (globalAudioContext && globalAudioContext.state === 'suspended') {
+      globalAudioContext.resume();
+    }
+    
+    // Play a tiny silent buffer to warm up/unlock the browser's audio engine (essential for mobile safari/chrome)
+    if (globalAudioContext) {
+      const buffer = globalAudioContext.createBuffer(1, 1, 22050);
+      const source = globalAudioContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(globalAudioContext.destination);
+      source.start(0);
+    }
+  } catch (e) {
+    console.warn("Failed to initialize globalAudioContext:", e);
+  }
+}
+
 export async function jarvisSpeak(text: string): Promise<void> {
   if (!text || !text.trim()) return;
 
@@ -1172,10 +1198,6 @@ export async function jarvisSpeak(text: string): Promise<void> {
     if (activeAudioSource) {
       try { activeAudioSource.stop(); } catch (e) {}
       activeAudioSource = null;
-    }
-    if (activeAudioContext) {
-      try { activeAudioContext.close(); } catch (e) {}
-      activeAudioContext = null;
     }
   }
 
@@ -1217,7 +1239,10 @@ export async function jarvisSpeak(text: string): Promise<void> {
               resolve();
               return;
             }
-            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+            if (!globalAudioContext) {
+              initGlobalAudioContext();
+            }
+            const audioContext = globalAudioContext || new (window.AudioContext || (window as any).webkitAudioContext)();
             activeAudioContext = audioContext;
 
             const binaryString = atob(base64Audio);

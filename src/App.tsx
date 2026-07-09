@@ -46,7 +46,7 @@ import {
   Download,
   ListTodo
 } from 'lucide-react';
-import { getJarvisResponse, jarvisSpeak, getTopWorldNews, NewsItem } from './lib/gemini';
+import { getJarvisResponse, jarvisSpeak, getTopWorldNews, NewsItem, initGlobalAudioContext } from './lib/gemini';
 import NeuralCore from './components/NeuralCore';
 import ColorOrb from './components/ColorOrb';
 import StarkWorkspace from './components/StarkWorkspace';
@@ -533,6 +533,19 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  // Unlocking AudioContext on mobile/desktop via user interaction (click/touchstart anywhere)
+  useEffect(() => {
+    const handleUnlock = () => {
+      initGlobalAudioContext();
+    };
+    document.addEventListener('click', handleUnlock);
+    document.addEventListener('touchstart', handleUnlock);
+    return () => {
+      document.removeEventListener('click', handleUnlock);
+      document.removeEventListener('touchstart', handleUnlock);
+    };
+  }, []);
+
   // Initial greeting
   useEffect(() => {
     const hour = new Date().getHours();
@@ -668,6 +681,7 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
 
   const handleSendMessage = async (e?: React.FormEvent, textOverride?: string) => {
     if (e) e.preventDefault();
+    initGlobalAudioContext(); // Pre-warm/unlock the AudioContext during direct user gesture
     const message = textOverride || userInput;
     if (!message.trim() && !selectedImage) return;
     if (isProcessing) return;
@@ -751,6 +765,7 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
 
   const handleVoiceCommand = async () => {
     if (isListening || isProcessing) return;
+    initGlobalAudioContext(); // Pre-warm/unlock the AudioContext during direct user gesture
 
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       setJarvisText("Reconhecimento de voz não suportado neste navegador, Sir.");
