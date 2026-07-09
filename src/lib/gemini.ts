@@ -194,32 +194,75 @@ async function callGeminiWithFallback(params: any): Promise<any> {
   throw lastError || new Error("All fallback models failed");
 }
 
+function classifyUserIntent(prompt: string): 'information_or_question' | 'execution' {
+  const normalized = prompt.toLowerCase().trim();
+
+  // Se o usuário estiver perguntando explicativamente "como fazer" algo, ou "por que", ou "o que é", é uma pergunta/dúvida informativa, não um comando de execução ativo.
+  if (
+    /^como\s+(fazer|faço|consigo|posso|excluir|deletar|adicionar|criar|remover|cadastrar|agendar|programar|mudar|consultar|ver|visualizar|gerar)/i.test(normalized) ||
+    normalized.includes("como eu faço") ||
+    normalized.includes("como posso") ||
+    normalized.includes("como se faz") ||
+    normalized.startsWith("o que é") ||
+    normalized.startsWith("o que significa") ||
+    normalized.startsWith("quem é") ||
+    normalized.startsWith("me explica") ||
+    normalized.startsWith("explique") ||
+    normalized.startsWith("por que") ||
+    normalized.startsWith("qual ") ||
+    normalized.startsWith("quais ") ||
+    normalized.startsWith("quantos ") ||
+    normalized.startsWith("quanto ") ||
+    normalized.startsWith("quando ") ||
+    normalized.startsWith("onde ") ||
+    normalized.startsWith("porquê ")
+  ) {
+    return 'information_or_question';
+  }
+
+  // Lista de padrões de execução/ação (deletar, cadastrar, adicionar, etc.)
+  const executionPatterns = [
+    // Deletar / Remover / Excluir
+    /delet[ae]/i, /exclu[ai]/i, /remov[ae]/i, /limp[ae]/i, /apagu[ei]/i,
+    // Adicionar / Criar / Registrar / Sincronizar / Agendar / Programar
+    /adicion[ei]/i, /cadastr[ei]/i, /registr[ei]/i, /salv[ei]/i, /cri[ei]/i, /agend[ei]/i, /program[ei]/i, /defin[ai]/i,
+    // Lançamentos financeiros
+    /gastei/i, /ganhei/i, /receb[ei]/i, /pagu[ei]/i, /compre[it]/i, /R\$/i,
+    // Ações de interface/navegador
+    /abra/i, /abrir/i, /visite/i, /mostre/i, /mude/i, /exiba/i, /oculte/i, /feche/i,
+    // Geração de simulados/cronogramas
+    /ger[ei]/i,
+    // Agenda / Alarme / Compromisso
+    /reunião/i, /compromisso/i, /sincroniz[ae]/i, /alarme/i, /aviso/i, /avisar/i
+  ];
+
+  const hasExecutionPattern = executionPatterns.some(pattern => pattern.test(normalized));
+  return hasExecutionPattern ? 'execution' : 'information_or_question';
+}
+
 export async function getJarvisResponse(prompt: string, context: string, imageBase64?: string) {
   const isSearchRequired = needsWebSearch(prompt);
   const settings = getSavedSpeechSettings();
   const isMultimodal = !!imageBase64;
 
-  const useGroq = settings.primaryEngine === 'groq';
+  const intent = classifyUserIntent(prompt);
+  console.log(`[Jarvis Intent Analysis] User intent classified as: ${intent}`);
 
-  // Forçar Gemini para comandos de workspace (agenda, alarmes, simulados, finanças, etc.) para habilitar Function Calling
-  const isWorkspaceCommand = /agenda|calend[aá]rio|alarme|aviso|avisa|compromisso|reuni[aã]o|cronograma|tarefa|simulado|cron[oô]metro|finan[cç]as|dinheiro|gasto|receita|saldo|economi|gastei|ganhei|comprar|custo|pagar|pagamento|reais|real|R\$|metas/i.test(prompt);
-
-  if (isSearchRequired) {
-    console.log("Jarvis: Pesquisa em tempo real requisitada. Roteando diretamente para canais Google Search...");
-  } else if (useGroq && groqApiKey && !isWorkspaceCommand && !isMultimodal) {
-    // Canal Primário Geral: Groq (Velocidade instantânea)
-    try {
-      console.log(`Jarvis: Processamento Heurístico via Groq (${settings.groqModel || 'llama-3.3-70b-versatile'})...`);
-      const groqText = await getGroqResponse(prompt, context);
-      if (groqText) {
-        return groqText;
+  if (intent === 'information_or_question' && !isMultimodal && !isSearchRequired) {
+    if (groqApiKey) {
+      try {
+        console.log("Jarvis Direct Text Route: Question/Doubt/Info. Routing to Groq for instant text response...");
+        const groqText = await getGroqResponse(prompt, context);
+        if (groqText) {
+          return groqText;
+        }
+      } catch (groqError) {
+        console.warn("Jarvis: Groq direct text response failed. Falling back to Gemini...", groqError);
       }
-    } catch (groqError) {
-      console.warn("Jarvis: Canal primário Groq indisponível. Alternando para canais de backup (Gemini)...", groqError);
     }
   }
 
-  // Canal de Backup/Pesquisa Online/Ferramentas: Gemini
+  // Canal de Backup/Pesquisa Online/Ferramentas: Gemini (para execução ou visão)
   if (!apiKey) {
     console.error("Jarvis: API Key missing.");
     return "Sir, a chave de API não foi configurada nos sistemas principais. Por favor, verifique as configurações.";
