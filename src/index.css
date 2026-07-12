@@ -4,10 +4,37 @@
 @theme {
   --font-inter: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-cyan-300: var(--theme-cyan-300);
+  --color-cyan-400: var(--theme-cyan-400);
+  --color-cyan-500: var(--theme-cyan-500);
+  --color-cyan-600: var(--theme-cyan-600);
 }
 
 :root {
   font-family: var(--font-inter);
+  
+  /* Azul Stark (Default) */
+  --theme-cyan-300: #67e8f9;
+  --theme-cyan-400: #22d3ee;
+  --theme-cyan-500: #06b6d4;
+  --theme-cyan-600: #0891b2;
+}
+
+.theme-matrix {
+  /* Verde Matrix */
+  --theme-cyan-300: #86efac;
+  --theme-cyan-400: #4ade80;
+  --theme-cyan-500: #22c55e;
+  --theme-cyan-600: #16a34a;
+}
+
+.theme-mark5 {
+  /* Vermelho Mark-V */
+  --theme-cyan-300: #fca5a5;
+  --theme-cyan-400: #f87171;
+  --theme-cyan-500: #ef4444;
+  --theme-cyan-600: #dc2626;
 }
 
 body {
@@ -18,7 +45,7 @@ body {
 /* Custom futuristic scrollbar styling for J.A.R.V.I.S */
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: rgba(6, 182, 212, 0.25) rgba(255, 255, 255, 0.01);
+  scrollbar-color: color-mix(in srgb, var(--theme-cyan-500) 25%, transparent) rgba(255, 255, 255, 0.01);
 }
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -32,19 +59,19 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(6, 182, 212, 0.25); /* elegant translucent J.A.R.V.I.S. cyan */
+  background: color-mix(in srgb, var(--theme-cyan-500) 25%, transparent); /* elegant translucent theme color */
   border-radius: 8px;
-  border: 1px solid rgba(6, 182, 212, 0.1);
+  border: 1px solid color-mix(in srgb, var(--theme-cyan-500) 10%, transparent);
   transition: background 0.3s ease;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(6, 182, 212, 0.5); /* bright cyan highlights on hover */
+  background: color-mix(in srgb, var(--theme-cyan-500) 50%, transparent); /* brighter theme highlights on hover */
 }
 
 @keyframes glow {
-  from { text-shadow: 0 0 5px #fff, 0 0 10px #fff, 0 0 15px #00e6e6, 0 0 20px #00e6e6; }
-  to { text-shadow: 0 0 10px #fff, 0 0 20px #fff, 0 0 30px #00e6e6, 0 0 40px #00e6e6; }
+  from { text-shadow: 0 0 5px #fff, 0 0 10px #fff, 0 0 15px var(--theme-cyan-400), 0 0 20px var(--theme-cyan-400); }
+  to { text-shadow: 0 0 10px #fff, 0 0 20px #fff, 0 0 30px var(--theme-cyan-400), 0 0 40px var(--theme-cyan-400); }
 }
 
 .glow-text {

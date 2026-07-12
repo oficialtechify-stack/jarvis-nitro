@@ -131,6 +131,54 @@ function autoCorrelate(buffer: Float32Array, sampleRate: number): number {
   return -1;
 }
 
+const fuzzyMatchWakeWord = (rawTranscript: string): boolean => {
+  const clean = rawTranscript
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // remove accents
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, " ") // replace punctuation with space
+    .trim();
+
+  const words = clean.split(/\s+/);
+  
+  // Specific full words and phonetic phrases
+  const phoneticMatches = [
+    "jarvis", "jarbas", "gervasio", "gervas", "alves", "alvis", "chaves", "chave",
+    "jadeves", "yadeves", "eijarvis", "heyjarvis", "oijarvis", "okjarvis",
+    "olajarvis", "olajarbas", "jardis", "charles", "jabes", "iabis", "arves",
+    "arvis", "albas", "abas", "jair", "garboso", "servis", "servico", "jaques",
+    "iavis", "iapas", "diabos", "diabo", "chaveiro", "avis", "abismo", "chovis",
+    "travis", "cravis", "dravis", "gervis", "gervisio", "gerva", "george", "jorge",
+    "java", "javas", "iave", "iaves", "arvi", "arbi", "javis", "javi", "jave", "iavi",
+    "yavis", "yavi", "shavis", "shavi", "gerv", "jarv", "jarb", "gerbas", "gerbis", "gervys",
+    "iavis", "yarvis", "arvis", "charli", "charles"
+  ];
+
+  if (phoneticMatches.some(match => clean.includes(match))) {
+    return true;
+  }
+
+  for (const word of words) {
+    if (word.length < 3) continue;
+    
+    // Check roots
+    const roots = ["jarv", "jarb", "gerv", "iavi", "yavi", "jard", "gervas", "charle", "travis", "dravis", "gervis", "javis"];
+    if (roots.some(root => word.includes(root))) {
+      return true;
+    }
+    
+    // Handle cases where "jar" is followed by a phonetic ending
+    if (word.startsWith("jar") && word.length >= 4) {
+      return true;
+    }
+    if (word.startsWith("ger") && (word.includes("v") || word.includes("b")) && word.length >= 4) {
+      return true;
+    }
+  }
+  
+  return false;
+};
+
 const TIME_ZONES: TimeZoneData[] = [
   { city: 'Jaboatão (Sir)', zone: 'America/Recife', offset: -3 },
   { city: 'London', zone: 'Europe/London', offset: 0 },
@@ -203,6 +251,44 @@ export default function App() {
   });
   const [primaryEngine, setPrimaryEngine] = useState(() => localStorage.getItem('jarvis_primary_engine') || 'groq');
   const [groqModel, setGroqModel] = useState(() => localStorage.getItem('jarvis_groq_model') || 'llama-3.3-70b-versatile');
+  
+  const [terminalTheme, setTerminalTheme] = useState<'stark' | 'matrix' | 'mark5'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('jarvis_terminal_theme') as any) || 'stark';
+    }
+    return 'stark';
+  });
+
+  const getOrbTones = (theme: 'stark' | 'matrix' | 'mark5') => {
+    if (theme === 'matrix') {
+      return {
+        base: "oklch(15% 0.04 140)",      // Deep forest base
+        accent1: "oklch(70% 0.22 140)",    // Radiant Emerald
+        accent2: "oklch(62% 0.2 165)",     // Bright Mint
+        accent3: "oklch(80% 0.15 120)",    // Quantum Lime
+      };
+    } else if (theme === 'mark5') {
+      return {
+        base: "oklch(15% 0.04 25)",       // Deep crimson base
+        accent1: "oklch(65% 0.25 25)",       // Mark-V Red
+        accent2: "oklch(55% 0.22 15)",       // Crimson glow
+        accent3: "oklch(75% 0.2 35)",        // Laser red
+      };
+    }
+    return undefined; // default Stark Blue
+  };
+
+  const handleSaveTerminalTheme = (theme: 'stark' | 'matrix' | 'mark5') => {
+    setTerminalTheme(theme);
+    localStorage.setItem('jarvis_terminal_theme', theme);
+    if (theme === 'stark') {
+      jarvisSpeak("Iniciando recalibração para o protocolo de energia Azul Stark, Sir.");
+    } else if (theme === 'matrix') {
+      jarvisSpeak("Ajustando codificação neural para o modo Verde Matrix, Sir Henrique.");
+    } else if (theme === 'mark5') {
+      jarvisSpeak("Atenção: Armadura Mark V ativa. Protocolo de combate Vermelho carregado.");
+    }
+  };
   
   const [customGeminiKey, setCustomGeminiKey] = useState(() => localStorage.getItem('jarvis_custom_gemini_key') || '');
   const [customGroqKey, setCustomGroqKey] = useState(() => localStorage.getItem('jarvis_custom_groq_key') || '');
@@ -378,6 +464,21 @@ export default function App() {
   const [jarvisText, setJarvisText] = useState("Online");
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusReport, setStatusReport] = useState<string[]>([]);
+
+  const isListeningRef = useRef(isListening);
+  isListeningRef.current = isListening;
+
+  const isProcessingRef = useRef(isProcessing);
+  isProcessingRef.current = isProcessing;
+
+  const isSpeakingRef = useRef(isSpeaking);
+  isSpeakingRef.current = isSpeaking;
+
+  const isBackgroundListeningRef = useRef(isBackgroundListening);
+  isBackgroundListeningRef.current = isBackgroundListening;
+
+  const wakeWordRecognitionRef = useRef<any>(null);
+  const isRecognitionRunningRef = useRef<boolean>(false);
 
   // Persistent multiple conversations states
   const [conversations, setConversations] = useState<Conversation[]>(() => {
@@ -938,160 +1039,90 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
     }
   };
 
+  // Controlled helper to start background recognition safely
+  const startBackgroundRecognition = () => {
+    if (!isBackgroundListeningRef.current) return;
+    if (isListeningRef.current || isProcessingRef.current || isSpeakingRef.current) return;
+    if (!wakeWordRecognitionRef.current) return;
+    if (isRecognitionRunningRef.current) return;
+
+    try {
+      wakeWordRecognitionRef.current.start();
+      isRecognitionRunningRef.current = true;
+      console.log("J.A.R.V.I.S. Escuta de fala de segundo plano iniciada.");
+    } catch (e: any) {
+      if (e.name === 'InvalidStateError') {
+        // Recognition is already running, sync state
+        isRecognitionRunningRef.current = true;
+      } else {
+        console.warn("Failed to start background recognition:", e);
+      }
+    }
+  };
+
+  // Controlled helper to stop background recognition safely
+  const stopBackgroundRecognition = () => {
+    if (!wakeWordRecognitionRef.current) return;
+    if (!isRecognitionRunningRef.current) return;
+
+    try {
+      wakeWordRecognitionRef.current.stop();
+      isRecognitionRunningRef.current = false;
+      console.log("J.A.R.V.I.S. Escuta de fala de segundo plano parada.");
+    } catch (e) {
+      console.warn("Failed to stop background recognition:", e);
+    }
+  };
+
   // Continuous background wake-word listener (J.A.R.V.I.S.)
   useEffect(() => {
-    if (!isBackgroundListening) return;
-
-    // Do not activate background listener if direct listening, processing or speaking is active
-    if (isListening || isProcessing || isSpeaking) return;
+    if (!isBackgroundListening) {
+      stopBackgroundRecognition();
+      wakeWordRecognitionRef.current = null;
+      return;
+    }
 
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       console.warn("Speech Recognition not supported on this device/browser.");
       return;
     }
 
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
     const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-    const wakeWordRecognition = new SpeechRecognition();
+    const recognition = new SpeechRecognition();
 
-    wakeWordRecognition.lang = 'pt-BR';
-    wakeWordRecognition.continuous = true;
-    wakeWordRecognition.interimResults = true;
+    recognition.lang = 'pt-BR';
+    recognition.continuous = !isMobileDevice; // continuous=false is much more robust on mobile
+    recognition.interimResults = true;
 
-    let shouldRestart = true;
-    let micStream: MediaStream | null = null;
-    let backgroundAudioCtx: AudioContext | null = null;
-    let backgroundAnalyser: AnalyserNode | null = null;
-    let backgroundAnimFrame: number | null = null;
-    
-    // Rolling buffer of voice pitch readings
-    const recentPitches: number[] = [];
-    const maxPitchesToKeep = 20;
+    wakeWordRecognitionRef.current = recognition;
 
-    // Start parallel warm microphone stream for mobile wake-state preservation and biometric telemetry
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then((stream) => {
-        micStream = stream;
-        console.log("J.A.R.V.I.S. Córtex Auditivo de segundo plano: Microfone ativo e aquecido.");
-
-        try {
-          const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-          backgroundAudioCtx = new AudioCtxClass();
-          backgroundAnalyser = backgroundAudioCtx.createAnalyser();
-          backgroundAnalyser.fftSize = 2048;
-
-          const source = backgroundAudioCtx.createMediaStreamSource(stream);
-          source.connect(backgroundAnalyser);
-
-          const bufferLength = backgroundAnalyser.fftSize;
-          const dataArray = new Float32Array(bufferLength);
-
-          const monitorAcoustics = () => {
-            if (!backgroundAnalyser) return;
-            backgroundAnalyser.getFloatTimeDomainData(dataArray);
-
-            // Calculate current audio power
-            let sum = 0;
-            for (let i = 0; i < dataArray.length; i++) {
-              sum += dataArray[i] * dataArray[i];
-            }
-            const rms = Math.sqrt(sum / dataArray.length);
-
-            // If voice activity is detected, compute real-time pitch
-            if (rms > 0.015) {
-              const detectedPitch = autoCorrelate(dataArray, backgroundAudioCtx!.sampleRate);
-              if (detectedPitch !== -1 && detectedPitch >= 70 && detectedPitch <= 400) {
-                recentPitches.push(detectedPitch);
-                if (recentPitches.length > maxPitchesToKeep) {
-                  recentPitches.shift();
-                }
-              }
-            }
-            backgroundAnimFrame = requestAnimationFrame(monitorAcoustics);
-          };
-
-          backgroundAnimFrame = requestAnimationFrame(monitorAcoustics);
-        } catch (err) {
-          console.warn("Could not start background biometric tracker:", err);
-        }
-      })
-      .catch((err) => {
-        console.error("Microphone pre-warming / biometrics stream failed:", err);
-      });
-
-    wakeWordRecognition.onstart = () => {
+    recognition.onstart = () => {
+      isRecognitionRunningRef.current = true;
       console.log("J.A.R.V.I.S. Escuta de fala de segundo plano ativa.");
     };
 
-    wakeWordRecognition.onresult = (event: any) => {
-      // Robust transcript construction: check both event.resultIndex and the very last element to handle all browsers
-      let combinedTranscript = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i] && event.results[i][0]) {
-          combinedTranscript += " " + event.results[i][0].transcript.toLowerCase();
-        }
-      }
-      
-      const lastIdx = event.results.length - 1;
-      if (lastIdx >= 0 && lastIdx !== event.resultIndex && event.results[lastIdx] && event.results[lastIdx][0]) {
-        combinedTranscript += " " + event.results[lastIdx][0].transcript.toLowerCase();
+    recognition.onresult = (event: any) => {
+      // If we are currently direct-listening, processing or speaking, skip processing background events
+      if (isListeningRef.current || isProcessingRef.current || isSpeakingRef.current) {
+        return;
       }
 
-      // Check for Jarvis-like hotwords (comprehensive phonetic fallbacks for Portuguese PT-BR)
-      const matches = [
-        'jarvis', 'jarbas', 'gervasio', 'gervásio', 'alves', 'alvis', 'chaves', 'chave',
-        'já deves', 'ya deves', 'ei jarvis', 'hey jarvis', 'oi jarvis', 'ok jarvis',
-        'olá jarvis', 'olá jarbas', 'ola jarvis', 'jardis', 'charles', 'jabes', 'iabis',
-        'arves', 'arvis', 'albas', 'abas', 'jair', 'garboso', 'gervas', 'servis', 'serviço',
-        'jaques', 'iavis', 'iapas', 'diabos', 'diabo', 'chaveiro', 'avis', 'abismo', 'chovis',
-        'travis', 'cravis', 'dravis', 'gervis', 'gervisio', 'gerva', 'george', 'jorge',
-        'java', 'javas', 'iave', 'iaves'
-      ];
-      
-      const isWakeWordDetected = matches.some(word => combinedTranscript.includes(word));
+      let combinedTranscript = "";
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result && result[0]) {
+          combinedTranscript += " " + result[0].transcript;
+        }
+      }
+
+      const isWakeWordDetected = fuzzyMatchWakeWord(combinedTranscript);
 
       if (isWakeWordDetected) {
         console.log("Palavra de ativação 'Jarvis' detectada no segundo plano!", combinedTranscript);
 
-        // Compute average vocal frequency during current speech window
-        let voiceMatches = true;
-        let pitchInfo = "";
-
-        if (voiceProfile && voiceProfile.calibrated && recentPitches.length > 0) {
-          const avgSpokenPitch = recentPitches.reduce((a, b) => a + b, 0) / recentPitches.length;
-          
-          // Formulate robust, octave-tolerant harmonic matching
-          const expected = voiceProfile.avgPitch;
-          const tolerance = expected * 0.45; // Generous 45% tolerance envelope for organic voice variance
-          
-          const match1x = Math.abs(avgSpokenPitch - expected) <= tolerance;
-          const match2x = Math.abs(avgSpokenPitch / 2 - expected) <= tolerance; // Octave doubling compensation
-          const match0_5x = Math.abs(avgSpokenPitch * 2 - expected) <= tolerance; // Octave halving compensation
-          
-          pitchInfo = ` (Média do tom: ${Math.round(avgSpokenPitch)} Hz. Esperado: ${expected} Hz [Tolerância: +/-45% e harmônicos])`;
-
-          if (!match1x && !match2x && !match0_5x) {
-            voiceMatches = false;
-          }
-        }
-
-        if (!voiceMatches) {
-          console.warn(`Wake word matched but vocal biometric signature failed verification!${pitchInfo}`);
-          setJarvisText("Biometria Rejeitada");
-          // Dispatch short biometric warning HUD
-          const customEvent = new CustomEvent('jarvis-speaking', { detail: { speaking: true, text: "Assinatura biométrica vocal não reconhecida, Senhor." } });
-          window.dispatchEvent(customEvent);
-          setTimeout(() => {
-            window.dispatchEvent(new CustomEvent('jarvis-speaking', { detail: { speaking: false } }));
-            setJarvisText("Online");
-          }, 2000);
-          return;
-        }
-
-        console.log(`Wake word accepted! Biometric verification PASSED.${pitchInfo}`);
-        shouldRestart = false;
-        try {
-          wakeWordRecognition.stop();
-        } catch (e) {}
+        // Turn off background engine so it does not hear itself speaking or interfere
+        stopBackgroundRecognition();
 
         const responseText = "Olá Senhor, como posso ajudar?";
         setJarvisText("Sir?");
@@ -1102,55 +1133,55 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
           // Wait briefly to clear audio buffers, then trigger voice command capture
           setTimeout(() => {
             handleVoiceCommand();
-          }, 350);
+          }, 450); // Generous 450ms wait to let speaker resources release fully
         }).catch(err => {
           console.error("Wake response error:", err);
           setIsSpeaking(false);
           setTimeout(() => {
             handleVoiceCommand();
-          }, 350);
+          }, 450);
         });
       }
     };
 
-    wakeWordRecognition.onerror = (event: any) => {
+    recognition.onerror = (event: any) => {
       console.warn("Background Speech Recognition Error:", event.error);
       if (event.error === 'not-allowed') {
         setIsBackgroundListening(false);
         localStorage.setItem('jarvis_background_listening', 'false');
       }
-    };
-
-    wakeWordRecognition.onend = () => {
-      console.log("Background Speech Recognition ended.");
-      if (shouldRestart && isBackgroundListening && !isListening && !isProcessing && !isSpeaking) {
-        // Micro-delay to let OS resources clear and prevent race conditions on shared microphone hardware
-        setTimeout(() => {
-          try {
-            if (isBackgroundListening && !isListening && !isProcessing && !isSpeaking) {
-              wakeWordRecognition.start();
-              console.log("Background Speech Recognition restarted successfully.");
-            }
-          } catch (e) {
-            console.error("Failed to restart background listener:", e);
-          }
-        }, 400);
+      if (event.error !== 'no-speech') {
+        isRecognitionRunningRef.current = false;
       }
     };
 
-    try {
-      wakeWordRecognition.start();
-    } catch (e) {
-      console.error("Background wakeWordRecognition start failed:", e);
-    }
+    recognition.onend = () => {
+      isRecognitionRunningRef.current = false;
+      console.log("Background Speech Recognition ended.");
+      
+      // Attempt safe auto-restart with micro-delay, ensuring no other audio system is active
+      if (isBackgroundListeningRef.current && !isListeningRef.current && !isProcessingRef.current && !isSpeakingRef.current) {
+        setTimeout(() => {
+          if (isBackgroundListeningRef.current && !isListeningRef.current && !isProcessingRef.current && !isSpeakingRef.current) {
+            startBackgroundRecognition();
+          }
+        }, 600); // 600ms micro-delay avoids crashing and provides robust hardware state clearance
+      }
+    };
+
+    // Initial activation
+    startBackgroundRecognition();
 
     // Auto-restart or restore connection on device wake, lock change, or visibility shift
     const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible' && isBackgroundListening && !isListening && !isProcessing && !isSpeaking) {
+      if (document.visibilityState === 'visible' && isBackgroundListeningRef.current && !isListeningRef.current && !isProcessingRef.current && !isSpeakingRef.current) {
         console.log("App focused or unlocked. Re-warming background listener...");
-        try {
-          wakeWordRecognition.stop();
-        } catch (e) {}
+        stopBackgroundRecognition();
+        setTimeout(() => {
+          if (isBackgroundListeningRef.current && !isListeningRef.current && !isProcessingRef.current && !isSpeakingRef.current) {
+            startBackgroundRecognition();
+          }
+        }, 300);
       }
     };
 
@@ -1158,23 +1189,33 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
     window.addEventListener('focus', handleVisibilityOrFocus);
 
     return () => {
-      shouldRestart = false;
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
-      try {
-        wakeWordRecognition.stop();
-      } catch (e) {}
-      if (backgroundAnimFrame) {
-        cancelAnimationFrame(backgroundAnimFrame);
-      }
-      if (backgroundAudioCtx && backgroundAudioCtx.state !== 'closed') {
-        backgroundAudioCtx.close();
-      }
-      if (micStream) {
-        micStream.getTracks().forEach(track => track.stop());
-      }
+      stopBackgroundRecognition();
+      wakeWordRecognitionRef.current = null;
     };
-  }, [isBackgroundListening, isListening, isProcessing, isSpeaking, voiceProfile]);
+  }, [isBackgroundListening]);
+
+  // Handle dynamic starts/stops based on active audio/listening state changes, with an integrated 300ms debounce
+  useEffect(() => {
+    if (!isBackgroundListening) return;
+
+    const shouldBeRunning = !isListening && !isProcessing && !isSpeaking;
+
+    const timer = setTimeout(() => {
+      if (shouldBeRunning) {
+        if (!isRecognitionRunningRef.current) {
+          startBackgroundRecognition();
+        }
+      } else {
+        if (isRecognitionRunningRef.current) {
+          stopBackgroundRecognition();
+        }
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [isListening, isProcessing, isSpeaking, isBackgroundListening]);
 
   const handleAskJarvisNews = (title: string, source: string) => {
     if (window.innerWidth < 1024) {
@@ -1208,7 +1249,7 @@ Por favor, forneça:
   };
 
   return (
-    <div className="h-screen max-h-screen bg-[#030406] text-white font-sans selection:bg-cyan-500/10 overflow-hidden relative font-inter flex flex-col">
+    <div className={`h-screen max-h-screen bg-[#030406] text-white font-sans selection:bg-cyan-500/10 overflow-hidden relative font-inter flex flex-col theme-${terminalTheme}`}>
       
       {/* 3D Neural Core Background - Compact in Center */}
       <div className="fixed inset-0 flex items-center justify-center z-0 pointer-events-none opacity-40 scale-110">
@@ -1326,10 +1367,10 @@ Por favor, forneça:
         <AnimatePresence>
           {showHistory && (
             <motion.div
-              initial={{ x: -350, opacity: 0 }}
+              initial={{ x: "-100%", opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
-              exit={{ x: -350, opacity: 0 }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              exit={{ x: "-100%", opacity: 0 }}
+              transition={{ type: "spring", damping: 30, stiffness: 220 }}
               className="fixed inset-y-0 left-0 z-40 lg:relative lg:inset-auto w-full max-w-[320px] lg:max-w-none lg:w-[320px] xl:w-[350px] h-full flex-shrink-0 border-r border-cyan-500/10 bg-[#07090e]/98 backdrop-blur-3xl p-5 flex flex-col gap-4"
             >
               {/* Sidebar Header */}
@@ -1466,6 +1507,7 @@ Por favor, forneça:
                     isThinking={isProcessing}
                     isSpeaking={isSpeaking}
                     interactive={true}
+                    tones={!(isListening || isProcessing || isSpeaking) ? getOrbTones(terminalTheme) : undefined}
                   />
                 </motion.div>
               </div>
@@ -1525,6 +1567,7 @@ Por favor, forneça:
                         active={currentlySpeakingText === msg.text || (isSpeaking && i === chatHistory.length - 1)} 
                         isSpeaking={currentlySpeakingText === msg.text || (isSpeaking && i === chatHistory.length - 1)}
                         interactive={true}
+                        tones={!(currentlySpeakingText === msg.text || (isSpeaking && i === chatHistory.length - 1)) ? getOrbTones(terminalTheme) : undefined}
                       />
                     </div>
                   )}
@@ -1856,10 +1899,10 @@ Por favor, forneça:
         <AnimatePresence>
           {showWorkspace && (
             <motion.div
-              initial={{ x: 350, opacity: 0 }}
+              initial={{ x: "100%", opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
-              exit={{ x: 350, opacity: 0 }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              exit={{ x: "100%", opacity: 0 }}
+              transition={{ type: "spring", damping: 30, stiffness: 220 }}
               className="fixed inset-y-0 right-0 z-40 lg:relative lg:inset-auto w-full lg:w-1/2 h-full flex-shrink-0 border-l border-cyan-500/10 bg-[#07090e]/98 backdrop-blur-3xl shadow-[0_0_50px_rgba(0,0,0,0.8)]"
             >
               <StarkWorkspace 
@@ -1994,7 +2037,7 @@ Por favor, forneça:
 
               {/* Title Header */}
               <div className="flex items-center gap-3">
-                <ColorOrb dimension="28px" active={true} />
+                <ColorOrb dimension="28px" active={true} tones={getOrbTones(terminalTheme)} />
                 <div>
                   <h2 className="text-sm font-semibold tracking-widest text-cyan-400 font-mono uppercase">
                     Configurações do J.A.R.V.I.S.
@@ -2185,6 +2228,56 @@ Por favor, forneça:
                     <span>Grave (Stark)</span>
                     <span>Padrão (1.0)</span>
                     <span>Agudo</span>
+                  </div>
+                </div>
+
+                <div className="h-[1px] bg-white/5 w-full my-1" />
+
+                {/* Theme Selector Section */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold tracking-widest text-cyan-400 uppercase font-mono block">
+                    Esquema de Cores do Terminal
+                  </label>
+                  <p className="text-[10.5px] text-white/50 leading-relaxed font-sans">
+                    Altere o visual global do terminal do J.A.R.V.I.S. e a energia do núcleo heurístico.
+                  </p>
+                  <div className="grid grid-cols-3 gap-2 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveTerminalTheme('stark')}
+                      className={`px-2 py-2 rounded-xl text-[10px] font-semibold tracking-wide transition-all border flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
+                        terminalTheme === 'stark'
+                          ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                          : 'bg-white/[0.01] border-white/5 hover:border-white/10 text-white/40 hover:text-white/70'
+                      }`}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]" />
+                      <span className="font-mono">Azul Stark</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveTerminalTheme('matrix')}
+                      className={`px-2 py-2 rounded-xl text-[10px] font-semibold tracking-wide transition-all border flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
+                        terminalTheme === 'matrix'
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/40 shadow-[0_0_12px_rgba(34,197,94,0.15)]'
+                          : 'bg-white/[0.01] border-white/5 hover:border-white/10 text-white/40 hover:text-white/70'
+                      }`}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
+                      <span className="font-mono">Verde Matrix</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveTerminalTheme('mark5')}
+                      className={`px-2 py-2 rounded-xl text-[10px] font-semibold tracking-wide transition-all border flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
+                        terminalTheme === 'mark5'
+                          ? 'bg-red-500/10 text-red-400 border-red-500/40 shadow-[0_0_12px_rgba(239,68,68,0.15)]'
+                          : 'bg-white/[0.01] border-white/5 hover:border-white/10 text-white/40 hover:text-white/70'
+                      }`}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
+                      <span className="font-mono">Mark-V Vermelho</span>
+                    </button>
                   </div>
                 </div>
 
