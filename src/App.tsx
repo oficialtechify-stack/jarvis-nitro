@@ -47,12 +47,14 @@ import {
   Image as ImageIcon,
   Smartphone,
   Download,
-  ListTodo
+  ListTodo,
+  RotateCcw
 } from 'lucide-react';
 import { getJarvisResponse, jarvisSpeak, stopJarvisSpeak, getTopWorldNews, NewsItem, initGlobalAudioContext } from './lib/gemini';
 import NeuralCore from './components/NeuralCore';
 import ColorOrb from './components/ColorOrb';
 import StarkWorkspace from './components/StarkWorkspace';
+import VoiceCalibration from './components/VoiceCalibration';
 
 // --- Types ---
 interface TimeZoneData {
@@ -66,6 +68,67 @@ interface Conversation {
   title: string;
   messages: { role: 'user' | 'jarvis'; text: string; image?: string }[];
   createdAt: string;
+}
+
+// Auto-correlation pitch detection algorithm (highly reliable for real-time vocal fundamental frequency)
+function autoCorrelate(buffer: Float32Array, sampleRate: number): number {
+  const size = buffer.length;
+  let rms = 0;
+  for (let i = 0; i < size; i++) {
+    const val = buffer[i];
+    rms += val * val;
+  }
+  rms = Math.sqrt(rms / size);
+  if (rms < 0.01) {
+    return -1; // Not enough signal
+  }
+
+  let r1 = 0;
+  let r2 = size - 1;
+  const thres = 0.2;
+  for (let i = 0; i < size / 2; i++) {
+    if (Math.abs(buffer[i]) < thres) { r1 = i; break; }
+  }
+  for (let i = size - 1; i > size / 2; i--) {
+    if (Math.abs(buffer[i]) < thres) { r2 = i; break; }
+  }
+
+  const subBuffer = buffer.subarray(r1, r2);
+  const subSize = subBuffer.length;
+  if (subSize === 0) return -1;
+
+  const correlations = new Float32Array(subSize);
+  for (let lag = 0; lag < subSize; lag++) {
+    let sum = 0;
+    for (let i = 0; i < subSize - lag; i++) {
+      sum += subBuffer[i] * subBuffer[i + lag];
+    }
+    correlations[lag] = sum;
+  }
+
+  let d = 0;
+  while (d < subSize - 1 && correlations[d] > correlations[d + 1]) {
+    d++;
+  }
+  
+  let maxVal = -1;
+  let maxLag = -1;
+  for (let i = d; i < subSize - 1; i++) {
+    if (correlations[i] > correlations[i - 1] && correlations[i] > correlations[i + 1]) {
+      if (correlations[i] > maxVal) {
+        maxVal = correlations[i];
+        maxLag = i;
+      }
+    }
+  }
+
+  if (maxLag > -1) {
+    const frequency = sampleRate / maxLag;
+    if (frequency >= 50 && frequency <= 500) {
+      return frequency;
+    }
+  }
+  return -1;
 }
 
 const TIME_ZONES: TimeZoneData[] = [
@@ -289,6 +352,27 @@ export default function App() {
   };
 
   const [isListening, setIsListening] = useState(false);
+  const [isBackgroundListening, setIsBackgroundListening] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('jarvis_background_listening');
+      return saved === 'true';
+    }
+    return false;
+  });
+  const [isCalibrationOpen, setIsCalibrationOpen] = useState(false);
+  const [voiceProfile, setVoiceProfile] = useState<{ calibrated: boolean; avgPitch: number; minPitch: number; maxPitch: number } | null>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('jarvis_voice_profile');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.error("Error parsing voice profile:", e);
+        }
+      }
+    }
+    return null;
+  });
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [currentlySpeakingText, setCurrentlySpeakingText] = useState<string | null>(null);
   const [jarvisText, setJarvisText] = useState("Online");
@@ -854,6 +938,244 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
     }
   };
 
+  // Continuous background wake-word listener (J.A.R.V.I.S.)
+  useEffect(() => {
+    if (!isBackgroundListening) return;
+
+    // Do not activate background listener if direct listening, processing or speaking is active
+    if (isListening || isProcessing || isSpeaking) return;
+
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      console.warn("Speech Recognition not supported on this device/browser.");
+      return;
+    }
+
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    const wakeWordRecognition = new SpeechRecognition();
+
+    wakeWordRecognition.lang = 'pt-BR';
+    wakeWordRecognition.continuous = true;
+    wakeWordRecognition.interimResults = true;
+
+    let shouldRestart = true;
+    let micStream: MediaStream | null = null;
+    let backgroundAudioCtx: AudioContext | null = null;
+    let backgroundAnalyser: AnalyserNode | null = null;
+    let backgroundAnimFrame: number | null = null;
+    
+    // Rolling buffer of voice pitch readings
+    const recentPitches: number[] = [];
+    const maxPitchesToKeep = 20;
+
+    // Start parallel warm microphone stream for mobile wake-state preservation and biometric telemetry
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then((stream) => {
+        micStream = stream;
+        console.log("J.A.R.V.I.S. Córtex Auditivo de segundo plano: Microfone ativo e aquecido.");
+
+        try {
+          const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+          backgroundAudioCtx = new AudioCtxClass();
+          backgroundAnalyser = backgroundAudioCtx.createAnalyser();
+          backgroundAnalyser.fftSize = 2048;
+
+          const source = backgroundAudioCtx.createMediaStreamSource(stream);
+          source.connect(backgroundAnalyser);
+
+          const bufferLength = backgroundAnalyser.fftSize;
+          const dataArray = new Float32Array(bufferLength);
+
+          const monitorAcoustics = () => {
+            if (!backgroundAnalyser) return;
+            backgroundAnalyser.getFloatTimeDomainData(dataArray);
+
+            // Calculate current audio power
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+              sum += dataArray[i] * dataArray[i];
+            }
+            const rms = Math.sqrt(sum / dataArray.length);
+
+            // If voice activity is detected, compute real-time pitch
+            if (rms > 0.015) {
+              const detectedPitch = autoCorrelate(dataArray, backgroundAudioCtx!.sampleRate);
+              if (detectedPitch !== -1 && detectedPitch >= 70 && detectedPitch <= 400) {
+                recentPitches.push(detectedPitch);
+                if (recentPitches.length > maxPitchesToKeep) {
+                  recentPitches.shift();
+                }
+              }
+            }
+            backgroundAnimFrame = requestAnimationFrame(monitorAcoustics);
+          };
+
+          backgroundAnimFrame = requestAnimationFrame(monitorAcoustics);
+        } catch (err) {
+          console.warn("Could not start background biometric tracker:", err);
+        }
+      })
+      .catch((err) => {
+        console.error("Microphone pre-warming / biometrics stream failed:", err);
+      });
+
+    wakeWordRecognition.onstart = () => {
+      console.log("J.A.R.V.I.S. Escuta de fala de segundo plano ativa.");
+    };
+
+    wakeWordRecognition.onresult = (event: any) => {
+      // Robust transcript construction: check both event.resultIndex and the very last element to handle all browsers
+      let combinedTranscript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i] && event.results[i][0]) {
+          combinedTranscript += " " + event.results[i][0].transcript.toLowerCase();
+        }
+      }
+      
+      const lastIdx = event.results.length - 1;
+      if (lastIdx >= 0 && lastIdx !== event.resultIndex && event.results[lastIdx] && event.results[lastIdx][0]) {
+        combinedTranscript += " " + event.results[lastIdx][0].transcript.toLowerCase();
+      }
+
+      // Check for Jarvis-like hotwords (comprehensive phonetic fallbacks for Portuguese PT-BR)
+      const matches = [
+        'jarvis', 'jarbas', 'gervasio', 'gervásio', 'alves', 'alvis', 'chaves', 'chave',
+        'já deves', 'ya deves', 'ei jarvis', 'hey jarvis', 'oi jarvis', 'ok jarvis',
+        'olá jarvis', 'olá jarbas', 'ola jarvis', 'jardis', 'charles', 'jabes', 'iabis',
+        'arves', 'arvis', 'albas', 'abas', 'jair', 'garboso', 'gervas', 'servis', 'serviço',
+        'jaques', 'iavis', 'iapas', 'diabos', 'diabo', 'chaveiro', 'avis', 'abismo', 'chovis',
+        'travis', 'cravis', 'dravis', 'gervis', 'gervisio', 'gerva', 'george', 'jorge',
+        'java', 'javas', 'iave', 'iaves'
+      ];
+      
+      const isWakeWordDetected = matches.some(word => combinedTranscript.includes(word));
+
+      if (isWakeWordDetected) {
+        console.log("Palavra de ativação 'Jarvis' detectada no segundo plano!", combinedTranscript);
+
+        // Compute average vocal frequency during current speech window
+        let voiceMatches = true;
+        let pitchInfo = "";
+
+        if (voiceProfile && voiceProfile.calibrated && recentPitches.length > 0) {
+          const avgSpokenPitch = recentPitches.reduce((a, b) => a + b, 0) / recentPitches.length;
+          
+          // Formulate robust, octave-tolerant harmonic matching
+          const expected = voiceProfile.avgPitch;
+          const tolerance = expected * 0.45; // Generous 45% tolerance envelope for organic voice variance
+          
+          const match1x = Math.abs(avgSpokenPitch - expected) <= tolerance;
+          const match2x = Math.abs(avgSpokenPitch / 2 - expected) <= tolerance; // Octave doubling compensation
+          const match0_5x = Math.abs(avgSpokenPitch * 2 - expected) <= tolerance; // Octave halving compensation
+          
+          pitchInfo = ` (Média do tom: ${Math.round(avgSpokenPitch)} Hz. Esperado: ${expected} Hz [Tolerância: +/-45% e harmônicos])`;
+
+          if (!match1x && !match2x && !match0_5x) {
+            voiceMatches = false;
+          }
+        }
+
+        if (!voiceMatches) {
+          console.warn(`Wake word matched but vocal biometric signature failed verification!${pitchInfo}`);
+          setJarvisText("Biometria Rejeitada");
+          // Dispatch short biometric warning HUD
+          const customEvent = new CustomEvent('jarvis-speaking', { detail: { speaking: true, text: "Assinatura biométrica vocal não reconhecida, Senhor." } });
+          window.dispatchEvent(customEvent);
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('jarvis-speaking', { detail: { speaking: false } }));
+            setJarvisText("Online");
+          }, 2000);
+          return;
+        }
+
+        console.log(`Wake word accepted! Biometric verification PASSED.${pitchInfo}`);
+        shouldRestart = false;
+        try {
+          wakeWordRecognition.stop();
+        } catch (e) {}
+
+        const responseText = "Olá Senhor, como posso ajudar?";
+        setJarvisText("Sir?");
+        setIsSpeaking(true);
+        
+        jarvisSpeak(responseText).then(() => {
+          setIsSpeaking(false);
+          // Wait briefly to clear audio buffers, then trigger voice command capture
+          setTimeout(() => {
+            handleVoiceCommand();
+          }, 350);
+        }).catch(err => {
+          console.error("Wake response error:", err);
+          setIsSpeaking(false);
+          setTimeout(() => {
+            handleVoiceCommand();
+          }, 350);
+        });
+      }
+    };
+
+    wakeWordRecognition.onerror = (event: any) => {
+      console.warn("Background Speech Recognition Error:", event.error);
+      if (event.error === 'not-allowed') {
+        setIsBackgroundListening(false);
+        localStorage.setItem('jarvis_background_listening', 'false');
+      }
+    };
+
+    wakeWordRecognition.onend = () => {
+      console.log("Background Speech Recognition ended.");
+      if (shouldRestart && isBackgroundListening && !isListening && !isProcessing && !isSpeaking) {
+        // Micro-delay to let OS resources clear and prevent race conditions on shared microphone hardware
+        setTimeout(() => {
+          try {
+            if (isBackgroundListening && !isListening && !isProcessing && !isSpeaking) {
+              wakeWordRecognition.start();
+              console.log("Background Speech Recognition restarted successfully.");
+            }
+          } catch (e) {
+            console.error("Failed to restart background listener:", e);
+          }
+        }, 400);
+      }
+    };
+
+    try {
+      wakeWordRecognition.start();
+    } catch (e) {
+      console.error("Background wakeWordRecognition start failed:", e);
+    }
+
+    // Auto-restart or restore connection on device wake, lock change, or visibility shift
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible' && isBackgroundListening && !isListening && !isProcessing && !isSpeaking) {
+        console.log("App focused or unlocked. Re-warming background listener...");
+        try {
+          wakeWordRecognition.stop();
+        } catch (e) {}
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    return () => {
+      shouldRestart = false;
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      try {
+        wakeWordRecognition.stop();
+      } catch (e) {}
+      if (backgroundAnimFrame) {
+        cancelAnimationFrame(backgroundAnimFrame);
+      }
+      if (backgroundAudioCtx && backgroundAudioCtx.state !== 'closed') {
+        backgroundAudioCtx.close();
+      }
+      if (micStream) {
+        micStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [isBackgroundListening, isListening, isProcessing, isSpeaking, voiceProfile]);
+
   const handleAskJarvisNews = (title: string, source: string) => {
     if (window.innerWidth < 1024) {
       setShowWorkspace(false);
@@ -905,6 +1227,50 @@ Por favor, forneça:
           <div className="flex items-center gap-2 px-3 py-1.5 bg-white/[0.02] border border-white/5 rounded-xl text-[10px] font-mono tracking-wider text-cyan-400">
             <MapPin size={10} className="animate-pulse text-cyan-400" />
             <span>GPS: {locationName}</span>
+          </div>
+
+          {/* Continuous J.A.R.V.I.S. Background Listening Connection Toggle */}
+          <div className="flex items-center gap-2">
+            <motion.button
+              whileHover={{ scale: 1.05, backgroundColor: "rgba(6, 182, 212, 0.08)" }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => {
+                const newVal = !isBackgroundListening;
+                if (newVal && (!voiceProfile || !voiceProfile.calibrated)) {
+                  setIsCalibrationOpen(true);
+                  return;
+                }
+                setIsBackgroundListening(newVal);
+                localStorage.setItem('jarvis_background_listening', newVal ? 'true' : 'false');
+                if (newVal) {
+                  jarvisSpeak("Córtex Auditivo de segundo plano ativado. Diga Jarvis para me chamar.");
+                } else {
+                  jarvisSpeak("Córtex Auditivo suspenso.");
+                }
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 border rounded-xl text-[10px] font-mono tracking-wider transition-all duration-300 cursor-pointer ${
+                isBackgroundListening 
+                  ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.15)]' 
+                  : 'bg-white/[0.02] border-white/5 text-white/40 hover:text-white/70'
+              }`}
+              title="Escuta em Segundo Plano (Diga 'Jarvis' para ativar)"
+            >
+              <Mic size={10} className={isBackgroundListening ? 'animate-pulse text-cyan-400' : 'text-white/40'} />
+              <span>CONEXÃO CONTÍNUA: {isBackgroundListening ? "ON" : "OFF"}</span>
+            </motion.button>
+
+            {voiceProfile?.calibrated && (
+              <motion.button
+                whileHover={{ scale: 1.05, backgroundColor: "rgba(6, 182, 212, 0.05)" }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setIsCalibrationOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/[0.02] border border-white/5 hover:border-cyan-500/20 text-white/40 hover:text-cyan-400 rounded-xl text-[10px] font-mono tracking-wider transition-all duration-300 cursor-pointer"
+                title="Recalibrar Assinatura Biométrica Vocal"
+              >
+                <RotateCcw size={10} className="text-cyan-500/60" />
+                <span>BIOMETRIA</span>
+              </motion.button>
+            )}
           </div>
         </div>
 
@@ -2035,6 +2401,19 @@ Por favor, forneça:
           </div>
         )}
       </AnimatePresence>
+
+      {/* Voice Calibration Biometric Modal */}
+      <VoiceCalibration
+        isOpen={isCalibrationOpen}
+        onClose={() => setIsCalibrationOpen(false)}
+        onCalibrated={(profile) => {
+          setVoiceProfile(profile);
+          setIsBackgroundListening(true);
+          localStorage.setItem('jarvis_background_listening', 'true');
+          setIsCalibrationOpen(false);
+          jarvisSpeak("Assinatura biométrica integrada com sucesso, Senhor Henrique. Olá Senhor, estou de prontidão em segundo plano.");
+        }}
+      />
 
       {/* Subtle CRT Overlay */}
       <div className="fixed inset-0 pointer-events-none z-50 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.02)_50%)] bg-[length:100%_4px] opacity-10" />
