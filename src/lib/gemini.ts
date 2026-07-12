@@ -240,7 +240,125 @@ function classifyUserIntent(prompt: string): 'information_or_question' | 'execut
   return hasExecutionPattern ? 'execution' : 'information_or_question';
 }
 
+async function fetchUrlContent(url: string): Promise<string> {
+  const cleanUrl = url.trim();
+  let targetUrl = cleanUrl;
+  if (/^www\./i.test(targetUrl)) {
+    targetUrl = "https://" + targetUrl;
+  }
+
+  // Try different proxies to guarantee success
+  const proxies = [
+    (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+    (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  ];
+
+  for (const proxy of proxies) {
+    try {
+      const response = await fetch(proxy(targetUrl));
+      if (response.ok) {
+        const html = await response.text();
+        if (html && html.trim()) {
+          if (typeof window !== 'undefined' && 'DOMParser' in window) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            
+            // Remove style, script, noscript, iframe, svg, head, nav, footer, link elements to keep text extremely clean
+            const elementsToRemove = doc.querySelectorAll('script, style, noscript, iframe, svg, head, nav, footer, link');
+            elementsToRemove.forEach(el => el.remove());
+            
+            let text = doc.body.innerText || doc.body.textContent || "";
+            text = text.replace(/\s+/g, ' ').replace(/\n+/g, '\n').trim();
+            if (text.length > 5000) {
+              text = text.substring(0, 5000) + "... [conteúdo truncado para otimização de memória]";
+            }
+            return text;
+          } else {
+            let text = html.replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '')
+                           .replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, '')
+                           .replace(/<[^>]+>/g, ' ')
+                           .replace(/\s+/g, ' ')
+                           .trim();
+            if (text.length > 5000) {
+              text = text.substring(0, 5000) + "... [conteúdo truncado]";
+            }
+            return text;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`Proxy failed for ${targetUrl}:`, err);
+    }
+  }
+
+  // Fallback direct fetch
+  try {
+    const directResponse = await fetch(targetUrl);
+    if (directResponse.ok) {
+      const text = await directResponse.text();
+      return text.substring(0, 4000);
+    }
+  } catch (e) {
+    console.warn("Direct fetch also failed:", e);
+  }
+
+  throw new Error("Não foi possível acessar as conexões neurais deste link externo.");
+}
+
+async function fetchYoutubeMetadata(url: string): Promise<{ title: string; author: string; thumbnail: string } | null> {
+  const match = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i);
+  if (!match) return null;
+  const videoId = match[1];
+  const oembedUrl = `https://noembed.com/embed?url=${encodeURIComponent('https://www.youtube.com/watch?v=' + videoId)}`;
+  try {
+    const res = await fetch(oembedUrl);
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        title: data.title || "Vídeo do YouTube",
+        author: data.author_name || "Canal do YouTube",
+        thumbnail: data.thumbnail_url || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+      };
+    }
+  } catch (e) {
+    console.warn("Failed to fetch youtube metadata from noembed:", e);
+  }
+  return {
+    title: "Vídeo do YouTube",
+    author: "YouTube",
+    thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+  };
+}
+
 export async function getJarvisResponse(prompt: string, context: string, imageBase64?: string) {
+  let enrichedContext = context;
+  const foundUrls = prompt.match(/(https?:\/\/[^\s]+|www\.[^\s]+)/gi);
+  if (foundUrls && foundUrls.length > 0) {
+    console.log("Jarvis: Identificado link na mensagem do Senhor. Ativando rastreamento de dados...", foundUrls);
+    for (const url of foundUrls) {
+      const isYoutube = /youtube\.com|youtu\.be/i.test(url);
+      if (isYoutube) {
+        try {
+          const ytMeta = await fetchYoutubeMetadata(url);
+          if (ytMeta) {
+            enrichedContext += `\n\n[MÍDIA DO YOUTUBE IDENTIFICADA]:\n- Link: ${url}\n- Título: ${ytMeta.title}\n- Canal/Autor: ${ytMeta.author}\n- Imagem de Capa (Thumbnail): ${ytMeta.thumbnail}\n\nINSTRUÇÃO ADICIONAL PARA O COGNITIVO DO JARVIS:\nO Senhor Henrique enviou o link do vídeo "${ytMeta.title}" do canal "${ytMeta.author}". Por favor, produza um resumo detalhado, inteligente e estruturado desse vídeo. Para conseguir as melhores informações e detalhes precisos, utilize obrigatoriamente a ferramenta Google Search para buscar resumos, transcrições ou comentários relevantes sobre "${ytMeta.title} ${ytMeta.author}".\n`;
+            continue;
+          }
+        } catch (err) {
+          console.warn("Error processing YouTube link:", err);
+        }
+      }
+
+      try {
+        const scrapedText = await fetchUrlContent(url);
+        enrichedContext += `\n\n[CONTEÚDO DO LINK: ${url}]:\n${scrapedText}\n`;
+      } catch (err) {
+        console.warn(`Failed to scrape link ${url}:`, err);
+        enrichedContext += `\n\n[ERRO AO TENTAR ACESSAR O LINK: ${url}]: Conexão neural indisponível ou o site impede rastreamento externo.\n`;
+      }
+    }
+  }
+
   const isSearchRequired = needsWebSearch(prompt);
   const settings = getSavedSpeechSettings();
   const isMultimodal = !!imageBase64;
@@ -252,7 +370,7 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
     if (groqApiKey) {
       try {
         console.log("Jarvis Direct Text Route: Question/Doubt/Info. Routing to Groq for instant text response...");
-        const groqText = await getGroqResponse(prompt, context);
+        const groqText = await getGroqResponse(prompt, enrichedContext);
         if (groqText) {
           return groqText;
         }
@@ -595,7 +713,7 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
               
               DIRETRIZ: Periodicamente, faça perguntas de mentoria, vendas ou tecnologia baseadas nas novidades reais do mundo.
               
-              CONTEXTO: ${context || "Central de Comando"}.`
+              CONTEXTO: ${enrichedContext || "Central de Comando"}.`
       },
       { text: prompt }
     ];
@@ -1184,6 +1302,20 @@ export function initGlobalAudioContext() {
   }
 }
 
+export function stopJarvisSpeak(): void {
+  currentSpeechId++;
+  if (typeof window !== 'undefined') {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (activeAudioSource) {
+      try { activeAudioSource.stop(); } catch (e) {}
+      activeAudioSource = null;
+    }
+    window.dispatchEvent(new CustomEvent('jarvis-speaking', { detail: { speaking: false } }));
+  }
+}
+
 export async function jarvisSpeak(text: string): Promise<void> {
   if (!text || !text.trim()) return;
 
@@ -1199,6 +1331,8 @@ export async function jarvisSpeak(text: string): Promise<void> {
       try { activeAudioSource.stop(); } catch (e) {}
       activeAudioSource = null;
     }
+    // Dispatch speaking = true
+    window.dispatchEvent(new CustomEvent('jarvis-speaking', { detail: { speaking: true, text } }));
   }
 
   const settings = getSavedSpeechSettings();
@@ -1206,6 +1340,8 @@ export async function jarvisSpeak(text: string): Promise<void> {
   
   // If useLocalAlways is true, we skip Gemini TTS API (Voz Neural) entirely for maximum speed!
   const shouldTryApi = !settings.useLocalAlways && (now - lastQuotaHit) > QUOTA_COOLDOWN;
+
+  let apiSuccess = false;
 
   if (shouldTryApi) {
     try {
@@ -1233,7 +1369,8 @@ export async function jarvisSpeak(text: string): Promise<void> {
       const base64Audio = audioPart?.inlineData?.data;
 
       if (base64Audio) {
-        return new Promise<void>(async (resolve) => {
+        apiSuccess = true;
+        await new Promise<void>(async (resolve) => {
           try {
             if (currentSpeechId !== mySpeechId) {
               resolve();
@@ -1321,12 +1458,17 @@ export async function jarvisSpeak(text: string): Promise<void> {
   if (currentSpeechId !== mySpeechId) return;
 
   // Fallback to Local SpeechSynthesis ONLY if explicitly enabled (user requested local voice)
-  if (settings.useLocalAlways && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  if (!apiSuccess && settings.useLocalAlways && typeof window !== 'undefined' && 'speechSynthesis' in window) {
     const chunks = chunkText(text);
     for (const chunk of chunks) {
       if (currentSpeechId !== mySpeechId) break;
       await speakWithSpeechSynthesis(chunk, mySpeechId);
     }
+  }
+
+  // Finished speaking!
+  if (typeof window !== 'undefined' && currentSpeechId === mySpeechId) {
+    window.dispatchEvent(new CustomEvent('jarvis-speaking', { detail: { speaking: false, text } }));
   }
 }
 

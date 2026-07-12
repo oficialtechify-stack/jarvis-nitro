@@ -33,6 +33,9 @@ import {
   Trash2,
   X,
   Volume2,
+  VolumeX,
+  Copy,
+  Check,
   MapPin,
   DollarSign,
   Wallet,
@@ -46,7 +49,7 @@ import {
   Download,
   ListTodo
 } from 'lucide-react';
-import { getJarvisResponse, jarvisSpeak, getTopWorldNews, NewsItem, initGlobalAudioContext } from './lib/gemini';
+import { getJarvisResponse, jarvisSpeak, stopJarvisSpeak, getTopWorldNews, NewsItem, initGlobalAudioContext } from './lib/gemini';
 import NeuralCore from './components/NeuralCore';
 import ColorOrb from './components/ColorOrb';
 import StarkWorkspace from './components/StarkWorkspace';
@@ -72,6 +75,29 @@ const TIME_ZONES: TimeZoneData[] = [
   { city: 'Tokyo', zone: 'Asia/Tokyo', offset: 9 },
   { city: 'Silicon Valley', zone: 'America/Los_Angeles', offset: -7 },
 ];
+
+function getSuggestionChips(text: string): string[] {
+  const lower = text.toLowerCase();
+  
+  if (lower.includes('projeto') || lower.includes('project') || lower.includes('stark') || lower.includes('metas')) {
+    return ["Aprofundar projeto", "Próximo passo prático", "Adicionar meta no painel"];
+  }
+  if (lower.includes('código') || lower.includes('program') || lower.includes('desenvolver') || lower.includes('api') || lower.includes('react') || lower.includes('typescript')) {
+    return ["Explicar linha a linha", "Otimizar este código", "Quais testes realizar?"];
+  }
+  if (lower.includes('finance') || lower.includes('dinheiro') || lower.includes('gasto') || lower.includes('custo') || lower.includes('preço') || lower.includes('investir') || lower.includes('saldo') || lower.includes('transação')) {
+    return ["Lançar no controle financeiro", "Gerar gráfico de projeção", "Dicas de economia"];
+  }
+  if (lower.includes('vídeo') || lower.includes('youtube') || lower.includes('resumo') || lower.includes('watch')) {
+    return ["Pontos-chave do vídeo", "Aplicabilidade prática", "Resumir em 3 tópicos"];
+  }
+  if (lower.includes('notícia') || lower.includes('news') || lower.includes('mundo') || lower.includes('aconteceu')) {
+    return ["Quais os impactos disso?", "Buscar mais detalhes", "Analisar mercado global"];
+  }
+  
+  return ["Explicar mais detalhadamente", "Resumir este conteúdo", "Quais os próximos passos?"];
+}
+
 export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -264,6 +290,7 @@ export default function App() {
 
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [currentlySpeakingText, setCurrentlySpeakingText] = useState<string | null>(null);
   const [jarvisText, setJarvisText] = useState("Online");
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusReport, setStatusReport] = useState<string[]>([]);
@@ -323,6 +350,7 @@ export default function App() {
   const [news, setNews] = useState<NewsItem[]>([]);
   const [currentNewsIndex, setCurrentNewsIndex] = useState(0);
   const [isLoadingNews, setIsLoadingNews] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   
   // Camera & Image Input States
@@ -543,6 +571,24 @@ export default function App() {
     return () => {
       document.removeEventListener('click', handleUnlock);
       document.removeEventListener('touchstart', handleUnlock);
+    };
+  }, []);
+
+  // Sync isSpeaking and currentlySpeakingText via global Jarvis voice events
+  useEffect(() => {
+    const handleSpeaking = (e: Event) => {
+      const customEvent = e as CustomEvent<{ speaking: boolean, text?: string }>;
+      if (customEvent.detail.speaking) {
+        setIsSpeaking(true);
+        setCurrentlySpeakingText(customEvent.detail.text || null);
+      } else {
+        setIsSpeaking(false);
+        setCurrentlySpeakingText(null);
+      }
+    };
+    window.addEventListener('jarvis-speaking', handleSpeaking);
+    return () => {
+      window.removeEventListener('jarvis-speaking', handleSpeaking);
     };
   }, []);
 
@@ -1047,7 +1093,14 @@ Por favor, forneça:
                   whileHover={{ scale: 1.10 }}
                   transition={{ duration: 0.3 }}
                 >
-                  <ColorOrb dimension="64px" active={isListening || isProcessing || isSpeaking} />
+                  <ColorOrb 
+                    dimension="64px" 
+                    active={isListening || isProcessing || isSpeaking} 
+                    isListening={isListening}
+                    isThinking={isProcessing}
+                    isSpeaking={isSpeaking}
+                    interactive={true}
+                  />
                 </motion.div>
               </div>
 
@@ -1101,14 +1154,20 @@ Por favor, forneça:
                 >
                   {msg.role === 'jarvis' && (
                     <div className="w-9 h-9 rounded-full bg-cyan-500/5 border border-cyan-500/20 flex items-center justify-center flex-shrink-0 shadow-[0_0_15px_rgba(6,182,212,0.15)] relative overflow-hidden">
-                      <ColorOrb dimension="34px" active={isSpeaking && i === chatHistory.length - 1} />
+                      <ColorOrb 
+                        dimension="34px" 
+                        active={currentlySpeakingText === msg.text || (isSpeaking && i === chatHistory.length - 1)} 
+                        isSpeaking={currentlySpeakingText === msg.text || (isSpeaking && i === chatHistory.length - 1)}
+                        interactive={true}
+                      />
                     </div>
                   )}
 
                   <div className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                     {msg.role === 'jarvis' && (
-                      <span className="text-[10px] font-bold tracking-[0.2em] text-cyan-400/70 mb-1.5 uppercase font-mono">
+                      <span className="text-[10px] font-bold tracking-[0.2em] text-cyan-400/70 mb-1.5 uppercase font-mono flex items-center gap-2">
                         J.A.R.V.I.S.
+                        {currentlySpeakingText === msg.text && <SoundWaveActive />}
                       </span>
                     )}
                     
@@ -1125,9 +1184,75 @@ Por favor, forneça:
                       {msg.role === 'user' ? (
                         msg.text
                       ) : (
-                        <FormattedMessage text={msg.text} />
+                        <div className="flex flex-col items-start gap-1">
+                          <FormattedMessage text={msg.text} />
+                          <div className="flex flex-wrap items-center gap-4 mt-3">
+                            {currentlySpeakingText === msg.text ? (
+                              <button
+                                onClick={() => {
+                                  stopJarvisSpeak();
+                                }}
+                                className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold tracking-widest text-red-400 hover:text-red-300 transition-all cursor-pointer hover:underline uppercase"
+                                id={`stop-btn-${i}`}
+                              >
+                                <VolumeX size={13} className="text-red-400 animate-pulse" />
+                                INTERROMPER
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  initGlobalAudioContext();
+                                  jarvisSpeak(msg.text);
+                                }}
+                                className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold tracking-widest text-cyan-400 hover:text-cyan-300 transition-all cursor-pointer hover:underline uppercase"
+                                id={`speak-btn-${i}`}
+                              >
+                                <Volume2 size={13} className="text-cyan-400" />
+                                OUVIR
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(msg.text);
+                                setCopiedIndex(i);
+                                setTimeout(() => setCopiedIndex(null), 2000);
+                              }}
+                              className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold tracking-widest text-cyan-400/60 hover:text-cyan-300 transition-all cursor-pointer hover:underline uppercase"
+                              id={`copy-btn-${i}`}
+                            >
+                              {copiedIndex === i ? (
+                                <>
+                                  <Check size={13} className="text-emerald-400" />
+                                  <span className="text-emerald-400">COPIADO!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy size={13} className="text-cyan-400/50" />
+                                  COPIAR
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </div>
+
+                    {msg.role === 'jarvis' && i === chatHistory.length - 1 && !isProcessing && (
+                      <div className="flex flex-wrap gap-2 mt-3" id="suggestion-chips-container">
+                        {getSuggestionChips(msg.text).map((chip, chipIdx) => (
+                          <motion.button
+                            key={chipIdx}
+                            whileHover={{ scale: 1.02, backgroundColor: "rgba(6, 182, 212, 0.12)", borderColor: "rgba(6, 182, 212, 0.3)" }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={() => handleSendMessage(undefined, chip)}
+                            className="bg-cyan-950/20 border border-cyan-500/15 text-cyan-300 hover:text-cyan-200 text-[11px] font-medium py-1.5 px-3 rounded-full cursor-pointer transition-all duration-200 font-sans shadow-sm"
+                          >
+                            {chip}
+                          </motion.button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {msg.role === 'user' && (
@@ -1145,7 +1270,7 @@ Por favor, forneça:
                   className="flex gap-4 justify-start"
                 >
                   <div className="w-9 h-9 rounded-full bg-cyan-500/5 border border-cyan-500/20 flex items-center justify-center flex-shrink-0 shadow-[0_0_15px_rgba(6,182,212,0.15)] overflow-hidden">
-                    <ColorOrb dimension="34px" active={true} />
+                    <ColorOrb dimension="34px" active={true} isThinking={true} />
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[10px] font-bold tracking-[0.2em] text-cyan-400/50 uppercase">
@@ -1943,6 +2068,33 @@ function DockIcon({ icon, active, onClick, highlighted, tooltip }: { icon: React
   );
 }
 
+function SoundWaveActive() {
+  return (
+    <div className="inline-flex items-end gap-[2px] h-3 px-0.5" id="soundwave-container">
+      <motion.span
+        animate={{ height: [4, 12, 4] }}
+        transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut", delay: 0.0 }}
+        className="w-[2px] bg-cyan-400 rounded-full"
+      />
+      <motion.span
+        animate={{ height: [6, 10, 6] }}
+        transition={{ duration: 0.7, repeat: Infinity, ease: "easeInOut", delay: 0.15 }}
+        className="w-[2px] bg-cyan-400 rounded-full"
+      />
+      <motion.span
+        animate={{ height: [3, 13, 3] }}
+        transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: 0.3 }}
+        className="w-[2px] bg-cyan-400 rounded-full"
+      />
+      <motion.span
+        animate={{ height: [5, 9, 5] }}
+        transition={{ duration: 0.6, repeat: Infinity, ease: "easeInOut", delay: 0.45 }}
+        className="w-[2px] bg-cyan-400 rounded-full"
+      />
+    </div>
+  );
+}
+
 // --- Companion Sub-components for Gemini-style Rich Message Format -----
 
 function FormattedMessage({ text }: { text: string }) {
@@ -1981,8 +2133,8 @@ function FormattedMessage({ text }: { text: string }) {
 }
 
 function renderFormattedLine(line: string) {
-  // Parses markdown bold (**text**) and markdown links ([text](url)) safely
-  const regex = /(\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)]+)\))/g;
+  // Parses markdown bold (**text**), markdown links ([text](url)) and plain URLs (https://... / http://... / www. ...) safely
+  const regex = /(\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)]+)\)|(https?:\/\/[^\s\)]+|www\.[^\s\)]+))/g;
   const parts = [];
   let lastIndex = 0;
   let match;
@@ -2012,6 +2164,25 @@ function renderFormattedLine(line: string) {
           className="text-cyan-400 hover:text-cyan-300 underline font-semibold transition-colors duration-200 inline-flex items-center gap-0.5"
         >
           {title}
+          <span className="text-[10px] opacity-70">↗</span>
+        </a>
+      );
+    } else if (match[5]) {
+      // Plain URL matches
+      const rawUrl = match[5];
+      let href = rawUrl;
+      if (/^www\./i.test(rawUrl)) {
+        href = "https://" + rawUrl;
+      }
+      parts.push(
+        <a
+          key={match.index}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-cyan-400 hover:text-cyan-300 underline font-semibold transition-colors duration-200 inline-flex items-center gap-0.5"
+        >
+          {rawUrl}
           <span className="text-[10px] opacity-70">↗</span>
         </a>
       );
