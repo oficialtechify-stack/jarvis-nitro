@@ -32,6 +32,7 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
   const mapRef = useRef<L.Map | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const routePolylineRef = useRef<L.Polyline | null>(null);
+  const routeGlowRef = useRef<L.Polyline | null>(null);
   const poiMarkersRef = useRef<L.Marker[]>([]);
   const searchMarkerRef = useRef<L.Marker | null>(null);
 
@@ -52,6 +53,8 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
     durationMin: number;
     etaTime: string;
   } | null>(null);
+  const [routeSteps, setRouteSteps] = useState<{ instruction: string; distanceMeters: number; type?: string }[]>([]);
+  const [currentStepIdx, setCurrentStepIdx] = useState<number>(0);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [pois, setPois] = useState<POI[]>([]);
   const [isLocating, setIsLocating] = useState<boolean>(false);
@@ -72,45 +75,54 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
 
     mapRef.current = map;
 
-    // CartoDB Dark Matter tile layer - reliable template without retina parameter
-    const cartoDarkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+    // OpenStreetMap standard tile layer - 100% reliable globally
+    const osmLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      subdomains: ['a', 'b', 'c', 'd'],
+      crossOrigin: true,
+      attribution: '&copy; OpenStreetMap',
     });
 
-    // OpenStreetMap fallback in case CartoDB tile server is blocked
-    const osmFallbackLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // CartoDB Dark tile layer alternative
+    const cartoLayer = L.tileLayer('https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      subdomains: ['a', 'b', 'c'],
+      subdomains: 'abcd',
+      crossOrigin: true,
     });
 
-    let failedTiles = 0;
-    cartoDarkLayer.on('tileerror', () => {
-      failedTiles++;
-      if (failedTiles > 3) {
-        if (map.hasLayer(cartoDarkLayer)) {
-          map.removeLayer(cartoDarkLayer);
-          osmFallbackLayer.addTo(map);
-          // Apply dark CSS filter to OSM fallback so it stays dark
-          const tilePane = map.getContainer().querySelector('.leaflet-tile-pane') as HTMLElement;
+    // Add CartoDB or OSM layer with dark filter fallback
+    cartoLayer.addTo(map);
+
+    // Apply dark filter to map container tile pane
+    const tilePane = map.getPane('tilePane');
+    if (tilePane) {
+      tilePane.style.backgroundColor = '#070d1a';
+    }
+
+    // Fallback to OSM if CartoDB tile fails
+    let errorCount = 0;
+    cartoLayer.on('tileerror', () => {
+      errorCount++;
+      if (errorCount > 2) {
+        if (map.hasLayer(cartoLayer)) {
+          map.removeLayer(cartoLayer);
+          osmLayer.addTo(map);
           if (tilePane) {
-            tilePane.style.filter = 'brightness(0.6) invert(1) contrast(1.3) hue-rotate(190deg)';
+            tilePane.style.filter = 'brightness(0.65) invert(1) contrast(1.25) hue-rotate(190deg) saturate(1.8)';
           }
         }
       }
     });
 
-    cartoDarkLayer.addTo(map);
-
-    // Invalidate map size multiple times to ensure full layout rendering
+    // Invalidate map size on mount and container size changes
     const t1 = setTimeout(() => map.invalidateSize(), 50);
     const t2 = setTimeout(() => map.invalidateSize(), 200);
     const t3 = setTimeout(() => map.invalidateSize(), 600);
 
-    const handleResize = () => {
+    // ResizeObserver ensures map redraws instantly whenever panel toggles or fullscreens
+    const resizeObserver = new ResizeObserver(() => {
       map.invalidateSize();
-    };
-    window.addEventListener('resize', handleResize);
+    });
+    resizeObserver.observe(mapContainerRef.current);
 
     // Custom Blue User Location Marker Icon (Google Maps glowing blue dot)
     const userDotIcon = L.divIcon({
@@ -153,7 +165,7 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
       clearTimeout(t1);
       clearTimeout(t2);
       clearTimeout(t3);
-      window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       if (movementIntervalRef.current) clearInterval(movementIntervalRef.current);
       map.remove();
       mapRef.current = null;
@@ -316,7 +328,7 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
     executeSearch(catName);
   };
 
-  // Trace Route to a destination using OSRM
+  // Trace Route to a destination using OSRM Routing API
   const traceRouteTo = async (destination: POI) => {
     if (!mapRef.current) return;
     setIsSearching(true);
@@ -324,7 +336,7 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
     const map = mapRef.current;
 
     try {
-      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${userCoords.lng},${userCoords.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson`;
+      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${userCoords.lng},${userCoords.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&steps=true`;
       const res = await fetch(osrmUrl);
       const data = await res.json();
 
@@ -335,28 +347,75 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
         const distanceKm = parseFloat((route.distance / 1000).toFixed(1));
         const durationMin = Math.ceil(route.duration / 60);
 
-        // Draw Cyan Route Line
-        if (routePolylineRef.current) {
-          routePolylineRef.current.remove();
+        // Parse OSRM Steps for Turn-by-Turn Guidance
+        let parsedSteps: { instruction: string; distanceMeters: number; type?: string }[] = [];
+        if (route.legs && route.legs[0] && route.legs[0].steps) {
+          parsedSteps = route.legs[0].steps.map((st: any) => {
+            const m = st.maneuver || {};
+            const streetName = st.name ? `na ${st.name}` : '';
+            let inst = 'Siga em frente';
+
+            if (m.type === 'depart') {
+              inst = `Inicie a rota em direção a ${destination.name.split(' ')[0]}`;
+            } else if (m.type === 'arrive') {
+              inst = `Você chegou ao seu destino: ${destination.name}`;
+            } else if (m.modifier === 'right') {
+              inst = `Vire à direita ${streetName}`;
+            } else if (m.modifier === 'left') {
+              inst = `Vire à esquerda ${streetName}`;
+            } else if (m.modifier === 'slight right') {
+              inst = `Mantenha-se à direita ${streetName}`;
+            } else if (m.modifier === 'slight left') {
+              inst = `Mantenha-se à esquerda ${streetName}`;
+            } else if (st.name) {
+              inst = `Siga pela ${st.name}`;
+            }
+
+            return {
+              instruction: inst.trim(),
+              distanceMeters: Math.round(st.distance || 0),
+              type: m.modifier || m.type,
+            };
+          });
         }
 
+        setRouteSteps(parsedSteps);
+        setCurrentStepIdx(0);
+
+        // Remove previous polylines
+        if (routePolylineRef.current) routePolylineRef.current.remove();
+        if (routeGlowRef.current) routeGlowRef.current.remove();
+
+        // 1. Outer Glow Line (Cyan translucent halo)
+        const glowPolyline = L.polyline(coordinates, {
+          color: '#00e5ff',
+          weight: 12,
+          opacity: 0.35,
+          lineCap: 'round',
+          lineJoin: 'round',
+        }).addTo(map);
+
+        // 2. Inner Main Cyan Route Path Line
         const cyanPolyline = L.polyline(coordinates, {
-          color: '#00d4ff',
+          color: '#00f0ff',
           weight: 6,
           opacity: 0.95,
           lineCap: 'round',
           lineJoin: 'round',
         }).addTo(map);
 
+        routeGlowRef.current = glowPolyline;
         routePolylineRef.current = cyanPolyline;
 
         const now = new Date();
         now.setMinutes(now.getMinutes() + durationMin);
         const etaStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+        const firstInstruction = parsedSteps.length > 0 ? parsedSteps[0].instruction : `em direção a ${destination.name}`;
+
         setNavigationInfo({
           destinationName: destination.name,
-          nextStreet: 'em direção a ' + (destination.name.split(' ')[0] || 'Destino'),
+          nextStreet: firstInstruction,
           distanceKm,
           durationMin,
           etaTime: etaStr,
@@ -366,7 +425,7 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
         map.fitBounds(cyanPolyline.getBounds(), { padding: [60, 60] });
 
         if (jarvisSpeak) {
-          jarvisSpeak(`Rota para ${destination.name} ativada. Distância: ${distanceKm} km. Tempo estimado: ${durationMin} minutos.`);
+          jarvisSpeak(`Rota traçada para ${destination.name}. Distância: ${distanceKm} quilômetros. Tempo estimado: ${durationMin} minutos.`);
         }
 
         startSimulatedMovement(coordinates);
@@ -380,7 +439,7 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
     }
   };
 
-  // Fallback Route
+  // Fallback Route (when network/router is offline)
   const fallbackDirectRoute = (destination: POI) => {
     if (!mapRef.current) return;
     const map = mapRef.current;
@@ -392,13 +451,21 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
     ];
 
     if (routePolylineRef.current) routePolylineRef.current.remove();
+    if (routeGlowRef.current) routeGlowRef.current.remove();
+
+    const glowPolyline = L.polyline(coords, {
+      color: '#00e5ff',
+      weight: 12,
+      opacity: 0.35,
+    }).addTo(map);
 
     const cyanPolyline = L.polyline(coords, {
-      color: '#00d4ff',
+      color: '#00f0ff',
       weight: 6,
       opacity: 0.95,
     }).addTo(map);
 
+    routeGlowRef.current = glowPolyline;
     routePolylineRef.current = cyanPolyline;
 
     const distKm = calculateDistance(userCoords.lat, userCoords.lng, destination.lat, destination.lng);
@@ -409,7 +476,7 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
 
     setNavigationInfo({
       destinationName: destination.name,
-      nextStreet: 'em direção a ' + destination.name,
+      nextStreet: 'Siga em direção a ' + destination.name,
       distanceKm: parseFloat(distKm.toFixed(1)),
       durationMin: durMin,
       etaTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -419,7 +486,7 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
     map.fitBounds(cyanPolyline.getBounds(), { padding: [60, 60] });
 
     if (jarvisSpeak) {
-      jarvisSpeak(`Navegação ativada para ${destination.name}.`);
+      jarvisSpeak(`Rota em linha direta traçada para ${destination.name}.`);
     }
 
     startSimulatedMovement(coords);
@@ -448,16 +515,21 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
     }, 2500);
   };
 
-  // Stop Navigation
+  // Stop Navigation & clear path lines
   const stopNavigation = () => {
     setIsNavigating(false);
     setNavigationInfo(null);
+    setRouteSteps([]);
     if (movementIntervalRef.current) clearInterval(movementIntervalRef.current);
     if (routePolylineRef.current) {
       routePolylineRef.current.remove();
       routePolylineRef.current = null;
     }
-    if (jarvisSpeak) jarvisSpeak("Navegação concluída.");
+    if (routeGlowRef.current) {
+      routeGlowRef.current.remove();
+      routeGlowRef.current = null;
+    }
+    if (jarvisSpeak) jarvisSpeak("Rota finalizada.");
   };
 
   // Form Submit
@@ -466,6 +538,90 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
     if (!searchQuery.trim()) return;
     executeSearch(searchQuery);
   };
+
+  // Listen for real-time J.A.R.V.I.S. voice/chat navigation events
+  useEffect(() => {
+    const handleMapsNavigateEvent = async (e: Event) => {
+      const customEvent = e as CustomEvent<{ query: string }>;
+      if (customEvent.detail && customEvent.detail.query) {
+        const q = customEvent.detail.query;
+        setSearchQuery(q);
+        setIsSearching(true);
+
+        try {
+          let results: POI[] = [];
+          // 1. Try Overpass API for local amenities
+          const overpassUrl = `https://overpass-api.de/api/interpreter?data=[out:json];node(around:10000,${userCoords.lat},${userCoords.lng})["name"~"${q}",i];out body 10;`;
+          try {
+            const res = await fetch(overpassUrl);
+            const data = await res.json();
+            if (data && data.elements && data.elements.length > 0) {
+              results = data.elements.map((el: any) => {
+                const dist = calculateDistance(userCoords.lat, userCoords.lng, el.lat, el.lon);
+                return {
+                  id: el.id.toString(),
+                  name: el.tags.name || q,
+                  category: el.tags.amenity || el.tags.shop || 'Local',
+                  lat: el.lat,
+                  lng: el.lon,
+                  address: el.tags['addr:street'] ? `${el.tags['addr:street']}, ${el.tags['addr:housenumber'] || ''}` : `Próximo a ${userAddress}`,
+                  distanceKm: parseFloat(dist.toFixed(1)),
+                };
+              }).sort((a: POI, b: POI) => (a.distanceKm || 0) - (b.distanceKm || 0));
+            }
+          } catch (err) {
+            console.warn('Overpass search fallback', err);
+          }
+
+          // 2. Nominatim fallback if Overpass yields no direct match
+          if (results.length === 0) {
+            const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&viewbox=${userCoords.lng-0.2},${userCoords.lat+0.2},${userCoords.lng+0.2},${userCoords.lat-0.2}&bounded=1`;
+            const nomRes = await fetch(nomUrl);
+            const nomData = await nomRes.json();
+            if (nomData && nomData.length > 0) {
+              results = nomData.slice(0, 5).map((el: any) => {
+                const lat = parseFloat(el.lat);
+                const lng = parseFloat(el.lon);
+                const dist = calculateDistance(userCoords.lat, userCoords.lng, lat, lng);
+                return {
+                  id: el.place_id.toString(),
+                  name: el.display_name.split(',')[0] || q,
+                  category: el.type || 'Local',
+                  lat,
+                  lng,
+                  address: el.display_name,
+                  distanceKm: parseFloat(dist.toFixed(1)),
+                };
+              });
+            }
+          }
+
+          const topPlace: POI = results.length > 0 ? results[0] : {
+            id: 'auto-dest',
+            name: q.charAt(0).toUpperCase() + q.slice(1),
+            category: 'Destino',
+            lat: userCoords.lat + 0.005,
+            lng: userCoords.lng + 0.004,
+            address: `${q}, ${userAddress}`,
+            distanceKm: 0.8,
+          };
+
+          setSearchResults(results.length > 0 ? results : [topPlace]);
+          selectSearchedPlace(topPlace);
+          await traceRouteTo(topPlace);
+        } catch (err) {
+          console.error('Error in automatic navigation:', err);
+        } finally {
+          setIsSearching(false);
+        }
+      }
+    };
+
+    window.addEventListener('stark_maps_navigate', handleMapsNavigateEvent);
+    return () => {
+      window.removeEventListener('stark_maps_navigate', handleMapsNavigateEvent);
+    };
+  }, [userCoords, userAddress]);
 
   return (
     <div className="relative w-full h-full min-h-[550px] flex-1 rounded-3xl overflow-hidden bg-[#070d1a] border border-cyan-500/20 shadow-[0_0_50px_rgba(6,182,212,0.15)] flex flex-col font-sans select-none">
@@ -542,13 +698,15 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
                 Locais Encontrados no Google Maps
               </div>
               {searchResults.map((poi) => (
-                <button
+                <div
                   key={poi.id}
-                  type="button"
-                  onClick={() => selectSearchedPlace(poi)}
                   className="w-full text-left px-3 py-2 rounded-xl hover:bg-cyan-500/15 border border-transparent hover:border-cyan-500/30 transition-all flex items-center justify-between group cursor-pointer"
                 >
-                  <div className="flex items-center gap-2.5 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => selectSearchedPlace(poi)}
+                    className="flex items-center gap-2.5 overflow-hidden text-left flex-1 cursor-pointer"
+                  >
                     <div className="w-7 h-7 rounded-lg bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 flex-shrink-0">
                       <MapPin size={14} />
                     </div>
@@ -560,13 +718,30 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
                         {poi.address}
                       </p>
                     </div>
+                  </button>
+
+                  <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                    {poi.distanceKm !== undefined && (
+                      <span className="text-[10px] font-mono text-cyan-400/80 font-semibold">
+                        {poi.distanceKm} km
+                      </span>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        selectSearchedPlace(poi);
+                        traceRouteTo(poi);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black font-mono font-bold text-[10px] flex items-center gap-1 shadow-md transition-all uppercase cursor-pointer"
+                      title="Traçar Rota imediatamente"
+                    >
+                      <Navigation size={11} />
+                      <span>Rota</span>
+                    </button>
                   </div>
-                  {poi.distanceKm !== undefined && (
-                    <span className="text-[10px] font-mono text-cyan-400/80 font-semibold flex-shrink-0 ml-2">
-                      {poi.distanceKm} km
-                    </span>
-                  )}
-                </button>
+                </div>
               ))}
             </div>
           )}

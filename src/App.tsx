@@ -209,6 +209,45 @@ function getSuggestionChips(text: string): string[] {
   return ["Explicar mais detalhadamente", "Resumir este conteúdo", "Quais os próximos passos?"];
 }
 
+function extractNavigationIntent(input: string): string | null {
+  if (!input) return null;
+  const clean = input.trim();
+  const lower = clean.toLowerCase();
+
+  const routePatterns = [
+    /(?:trace|traçar|tracar|desenhe|desenhar)\s+(?:a\s+)?rota\s+(?:at[eé]|para|ao|na|no|a|o|pro|pra)?\s*(.+)/i,
+    /(?:me\s+leve|me\s+leva|me\s+levar)\s+(?:at[eé]|para|ao|na|no|a|o|pro|pra)?\s*(.+)/i,
+    /(?:quero\s+ir|ir)\s+(?:at[eé]|para|ao|na|no|pro|pra)\s*(.+)/i,
+    /(?:como\s+chegar)\s+(?:em|no|na|ao|at[eé]|para|pro|pra)?\s*(.+)/i,
+    /(?:navegar|navega|navegaç[ãa]o)\s+(?:para|at[eé]|ao|na|no|pro|pra)?\s*(.+)/i,
+    /(?:aonde\s+[eé]|onde\s+[eé]|onde\s+fica)\s+(?:o|a|os|as)?\s*(.+)/i
+  ];
+
+  for (const pattern of routePatterns) {
+    const match = clean.match(pattern);
+    if (match && match[1]) {
+      let target = match[1].trim().replace(/[?.!]+$/, '');
+      if (target.length > 2) {
+        return target;
+      }
+    }
+  }
+
+  if (
+    lower.includes('mais pr') || 
+    lower.includes('mais próx') || 
+    lower.includes('rota') || 
+    lower.includes('traçar') || 
+    lower.includes('tracar')
+  ) {
+    if (lower.includes('mercado') || lower.includes('farm') || lower.includes('posto') || lower.includes('restaurante') || lower.includes('hospital') || lower.includes('shopping')) {
+      return clean;
+    }
+  }
+
+  return null;
+}
+
 export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -933,6 +972,29 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
     setSelectedImage(null);
     setIsProcessing(true);
     setJarvisText("Sincronizando feixes neurais...");
+
+    // Check for J.A.R.V.I.S. Voice / Text Real-Time Navigation Intent
+    const navQuery = extractNavigationIntent(message);
+    if (navQuery && !finalImage) {
+      setShowWorkspace(true);
+      setWorkspaceTab('maps');
+      setIsWorkspaceFullscreen(true);
+
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('stark_maps_navigate', {
+          detail: { query: navQuery }
+        }));
+      }, 350);
+
+      const jarvisRouteReply = `Comandante Henrique, localizei "${navQuery}" em sua posição GPS. Abrindo o mapa tático e traçando a rota completa em tempo real.`;
+      updateActiveChatHistory([...newHistory, { role: 'jarvis', text: jarvisRouteReply }]);
+      setJarvisText("Navegação Tática Ativa");
+      setIsSpeaking(true);
+      await jarvisSpeak(jarvisRouteReply);
+      setIsSpeaking(false);
+      setIsProcessing(false);
+      return;
+    }
 
     const newsContext = news.length > 0 
       ? `Principais Notícias do Mundo Agora: ${news.map(n => `[${n.category}] ${n.title} (Fonte: ${n.source})`).join(' | ')}`
