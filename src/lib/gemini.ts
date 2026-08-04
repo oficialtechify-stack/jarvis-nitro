@@ -1473,32 +1473,53 @@ export async function jarvisSpeak(text: string): Promise<void> {
 }
 
 export interface NewsItem {
+  id?: string;
   title: string;
   source: string;
   category: string;
   url?: string;
+  summary?: string;
+  timestamp?: string;
+  sentiment?: 'Positivo' | 'Neutro' | 'Alerta';
 }
 
-export async function getTopWorldNews(): Promise<NewsItem[]> {
+export async function getTopWorldNews(requestedCategory?: string): Promise<NewsItem[]> {
+  const timeNow = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const categoryConstraint = requestedCategory && requestedCategory !== 'Todos' 
+    ? `focadas especialmente na categoria "${requestedCategory}"`
+    : `em diversas categorias (Tecnologia, Economia, Ciência, Brasil, Mundo, Stark Tech)`;
+
   if (!apiKey) {
-    return [
-      { title: "Sindicatos e governos intensificam diálogo sobre transição climática justa", source: "Folha", category: "Ambiente" },
-      { title: "Avanços em inteligência artificial generativa aceleram desenvolvimento de chips em escala global", source: "TechCrunch", category: "Tecnologia" },
-      { title: "Bolsas mundiais registram estabilidade à espera de novos anúncios de política monetária", source: "Bloomberg", category: "Economia" }
+    const fallbackNews: NewsItem[] = [
+      { id: '1', title: "Avanços em inteligência artificial generativa aceleram novos chips neurais", source: "TechCrunch", category: "Tecnologia", summary: "Nova geração de aceleradores de IA reduz consumo de energia em 40% com processamento em tempo real.", timestamp: timeNow, sentiment: "Positivo" },
+      { id: '2', title: "Sindicatos e governos intensificam diálogo sobre transição climática justa", source: "Folha de S.Paulo", category: "Ambiente", summary: "Acordos globais visam financiar capacitação tecnológica para trabalhadores no setor de energia limpa.", timestamp: timeNow, sentiment: "Neutro" },
+      { id: '3', title: "Mercados globais e Bolsas registram estabilidade à espera de política monetária", source: "Bloomberg", category: "Economia", summary: "Investidores acompanham novos relatórios de inflação e taxas de juros no cenário internacional.", timestamp: timeNow, sentiment: "Neutro" },
+      { id: '4', title: "Novo reator de fusão limpa estabelece recorde histórico de contenção estável", source: "Nature", category: "Ciência", summary: "Experimento com plasma magnético mantém reação de fusão estável por mais de 10 minutos seguidos.", timestamp: timeNow, sentiment: "Positivo" },
+      { id: '5', title: "Sistemas de defesa cibernética baseados em IA neutralizam novas ameaças globais", source: "CyberThreat", category: "Segurança", summary: "Modelos heurísticos automatizados bloqueiam tentativas de invasão em infraestruturas críticas.", timestamp: timeNow, sentiment: "Alerta" },
+      { id: '6', title: "Setor de tecnologia do Brasil cresce 18% impulsionado por soluções em nuvem", source: "G1", category: "Brasil", summary: "Empresas nacionais expandem investimentos em automação e desenvolvimento de softwares inteligentes.", timestamp: timeNow, sentiment: "Positivo" }
     ];
+
+    if (requestedCategory && requestedCategory !== 'Todos') {
+      return fallbackNews.filter(n => n.category.toLowerCase().includes(requestedCategory.toLowerCase()));
+    }
+    return fallbackNews;
   }
 
   try {
-    const prompt = `Retorne EXCLUSIVAMENTE um array em formato JSON contendo as 5 principais notícias em tempo real de hoje, misturando destaques mundiais importantes (e.g. Reuters, Bloomberg) e nacionais do Brasil (e.g., G1, Globo, CNN Brasil).
-Não adicione markdown (como \`\`\`json ou outro texto). O formato deve ser um array JSON estrito com objetos contendo:
-"title" (título chamativo, curto e polido em português do brasil),
-"source" (veículo de comunicação real que publicou a notícia, como G1, Globo, Reuters, etc.),
-"category" (uma categoria simples como Tecnologia, Economia, Ciência, Mundo, Brasil, Geral),
-"url" (uma URL de site confiável com detalhes sobre a matéria ou de portal grande referente a ela).
+    const prompt = `Retorne EXCLUSIVAMENTE um array em formato JSON contendo as 8 notícias em tempo real mais recentes e relevantes de hoje, ${categoryConstraint}.
+Misture destaques internacionais confiáveis (Reuters, Bloomberg, TechCrunch, Wired) e nacionais do Brasil (G1, Globo, CNN Brasil, Folha).
+GARANTA dados atualizados e nunca repita notícias antigas.
 
-Exemplo de formato esperado:
+O formato DEVE ser um JSON estrito (array de objetos) sem blocos de texto ou explicações, com a estrutura:
 [
-  {"title": "Texto da notícia", "source": "Nome do portal", "category": "Categoria", "url": "https://..."}
+  {
+    "title": "Título conciso e impactante em português",
+    "source": "Veículo real",
+    "category": "Tecnologia | Economia | Ciência | Brasil | Mundo | Segurança",
+    "summary": "Resumo de 1 a 2 frases curtas com os pontos principais",
+    "sentiment": "Positivo | Neutro | Alerta",
+    "url": "https://..."
+  }
 ]`;
 
     const response = await ai.models.generateContent({
@@ -1515,23 +1536,51 @@ Exemplo de formato esperado:
     const text = response.text || "";
     const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
     const news = JSON.parse(cleanText);
-    if (Array.isArray(news)) {
-      return news.slice(0, 5).map(item => ({
-        title: item.title || "Notícia importante",
-        source: item.source || "Geral",
+    if (Array.isArray(news) && news.length > 0) {
+      return news.map((item, idx) => ({
+        id: `news_${Date.now()}_${idx}`,
+        title: item.title || "Notícia em tempo real",
+        source: item.source || "Fonte Global",
         category: item.category || "Mundo",
+        summary: item.summary || "Resumo processado pelos sistemas heurísticos do J.A.R.V.I.S.",
+        sentiment: (item.sentiment === 'Positivo' || item.sentiment === 'Alerta' ? item.sentiment : 'Neutro'),
+        timestamp: timeNow,
         url: item.url || "#"
       }));
     }
   } catch (err) {
-    console.warn("Falha ao obter notícias em tempo real", err);
+    console.warn("Falha ao obter notícias em tempo real via Gemini", err);
   }
 
   return [
-    { title: "Inovação em energia de fusão limpa alcança novo recorde de contenção estável", source: "Nature", category: "Ciência" },
-    { title: "Avanços em inteligência artificial generativa aceleram desenvolvimento global", source: "Wired", category: "Tecnologia" },
-    { title: "Mercados globais mostram resiliência em meio a novos dados econômicos", source: "Reuters", category: "Geral" }
+    { id: 'f1', title: "Inovação em energia de fusão limpa alcança novo recorde de contenção estável", source: "Nature", category: "Ciência", summary: "Pesquisadores internacionais registram avanço expressivo na estabilização do plasma.", timestamp: timeNow, sentiment: "Positivo" },
+    { id: 'f2', title: "Avanços em inteligência artificial generativa aceleram ecossistemas de desenvolvimento", source: "Wired", category: "Tecnologia", summary: "Novas arquiteturas de modelos diminuem latência e aumentam precisão de código.", timestamp: timeNow, sentiment: "Positivo" },
+    { id: 'f3', title: "Mercados globais mostram resiliência em meio a novos dados econômicos", source: "Reuters", category: "Economia", summary: "Índices mundiais mantêm trajetória positiva em resposta aos últimos relatórios de produção.", timestamp: timeNow, sentiment: "Neutro" }
   ];
+}
+
+export async function analyzeNewsWithAI(title: string, source: string, category: string): Promise<string> {
+  if (!apiKey) {
+    return `Análise do J.A.R.V.I.S. para "${title}": Esta notícia do portal ${source} na categoria ${category} traz um impacto relevante no cenário estratégico. Recomendo monitorar novos desdobramentos nas próximas horas.`;
+  }
+  try {
+    const prompt = `Você é o J.A.R.V.I.S., assistente virtual avançado de Tony Stark.
+Sua missão: Faça uma análise executiva breve e direta (no máximo 3 frases em tom futurista, técnico e cortês) sobre a notícia seguinte:
+Título: "${title}"
+Fonte: "${source}"
+Categoria: "${category}"
+
+Explique o impacto direto e a recomendação estratégica para o Sir Henrique.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: [{ role: "user", parts: [{ text: prompt }] }]
+    });
+
+    return response.text || "Análise concluída sem ressalvas pelos sistemas estratégicos do J.A.R.V.I.S.";
+  } catch (err) {
+    return `Não foi possível gerar a análise detalhada no momento. A notícia "${title}" permanece registrada sob monitoramento.`;
+  }
 }
 
 export interface GeneratedQuestion {

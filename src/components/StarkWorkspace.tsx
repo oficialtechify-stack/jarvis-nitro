@@ -31,11 +31,19 @@ import {
   FileText,
   Volume2,
   Globe,
-  Newspaper
+  Newspaper,
+  MapPin,
+  Maximize2,
+  Minimize2,
+  Minus
 } from 'lucide-react';
+import { GoogleMapsView } from './GoogleMapsView';
 import { 
   generateStarkWorkspaceContent, 
   jarvisSpeak, 
+  getTopWorldNews,
+  analyzeNewsWithAI,
+  NewsItem,
   GenerationResult, 
   GeneratedQuestion, 
   GeneratedTaskItem 
@@ -94,23 +102,46 @@ export default function StarkWorkspace({
   onClose,
   activeTab: controlledTab,
   onTabChange,
+  isFullscreen = true,
+  onToggleFullscreen,
   news = [],
   isLoadingNews = false,
   onAskJarvisNews,
   onAskJarvisProject
 }: { 
   onClose: () => void;
-  activeTab?: 'calendar' | 'time' | 'generator' | 'finance' | 'news' | 'projects';
-  onTabChange?: (tab: 'calendar' | 'time' | 'generator' | 'finance' | 'news' | 'projects') => void;
+  activeTab?: 'finance' | 'news' | 'maps';
+  onTabChange?: (tab: 'finance' | 'news' | 'maps') => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
   news?: any[];
   isLoadingNews?: boolean;
   onAskJarvisNews?: (title: string, source: string) => void;
   onAskJarvisProject?: (project: StarkProject) => void;
 }) {
-  const [localActiveTab, setLocalActiveTab] = useState<'calendar' | 'time' | 'generator' | 'finance' | 'news' | 'projects'>('calendar');
+  const [localActiveTab, setLocalActiveTab] = useState<'finance' | 'news' | 'maps'>('maps');
   const [newsCategoryFilter, setNewsCategoryFilter] = useState('Todos');
   const activeTab = controlledTab !== undefined ? controlledTab : localActiveTab;
   const setActiveTab = onTabChange || setLocalActiveTab;
+  
+  // REAL-TIME AI NEWS STATES
+  const [liveNews, setLiveNews] = useState<NewsItem[]>(news || []);
+  const [isFetchingLiveNews, setIsFetchingLiveNews] = useState(false);
+  const [newsCountdown, setNewsCountdown] = useState(120); // seconds until auto-refresh
+  const [autoRefreshNews, setAutoRefreshNews] = useState(true);
+  const [selectedNewsAnalysis, setSelectedNewsAnalysis] = useState<{ news: NewsItem; analysis: string; loading: boolean } | null>(null);
+
+  // SEARCH & ADVANCED FINANCE STATES
+  const [txSearchQuery, setTxSearchQuery] = useState('');
+  const [txCategoryFilter, setTxCategoryFilter] = useState('Todas');
+  const [txTypeFilter, setTxTypeFilter] = useState<'all' | 'income' | 'expense'>('all');
+  const [aiFinanceAdvice, setAiFinanceAdvice] = useState<string | null>(null);
+  const [isAnalyzingFinance, setIsAnalyzingFinance] = useState(false);
+  const [injectGoalModal, setInjectGoalModal] = useState<{ goal: FinancialGoal | null; amount: string }>({ goal: null, amount: '' });
+
+  // CALENDAR FILTER & SEARCH STATES
+  const [eventSearchQuery, setEventSearchQuery] = useState('');
+  const [eventCategoryFilter, setEventCategoryFilter] = useState('Todos');
   
   // ----------------------------------------------------
   // GOOGLE CALENDAR & FIREBASE AUTH & FINANCE STATE
@@ -252,6 +283,67 @@ export default function StarkWorkspace({
   useEffect(() => {
     localStorage.setItem('stark_projects', JSON.stringify(projects));
   }, [projects]);
+
+  // Sync props news with local live news initially
+  useEffect(() => {
+    if (news && news.length > 0 && liveNews.length === 0) {
+      setLiveNews(news);
+    }
+  }, [news]);
+
+  // Live AI news fetch function with search grounding
+  const refreshLiveAINews = async (category: string = newsCategoryFilter) => {
+    setIsFetchingLiveNews(true);
+    try {
+      const freshNews = await getTopWorldNews(category);
+      if (freshNews && freshNews.length > 0) {
+        setLiveNews(freshNews);
+        setNewsCountdown(120);
+      }
+    } catch (err) {
+      console.warn("Erro ao atualizar notícias ao vivo via IA:", err);
+    } finally {
+      setIsFetchingLiveNews(false);
+    }
+  };
+
+  // Auto-refresh timer effect for News tab
+  useEffect(() => {
+    if (!autoRefreshNews) return;
+    const interval = setInterval(() => {
+      setNewsCountdown(prev => {
+        if (prev <= 1) {
+          refreshLiveAINews(newsCategoryFilter);
+          return 120;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [autoRefreshNews, newsCategoryFilter]);
+
+  // AI Finance Advisor Handler
+  const handleGenerateAiFinanceDiagnosis = async () => {
+    setIsAnalyzingFinance(true);
+    try {
+      const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+      const totalExpense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+      const balance = totalIncome - totalExpense;
+      const cats = transactions.filter(t => t.type === 'expense').map(t => `${t.category}: R$${t.amount}`).join(', ');
+
+      const diagnosisText = `DIAGNÓSTICO PATRIMONIAL J.A.R.V.I.S.:
+• SAÚDE DE LIQUIDEZ: Balanço atual em ${balance >= 0 ? 'superávit' : 'déficit'} de R$ ${balance.toFixed(2)} (Receitas: R$ ${totalIncome.toFixed(2)} / Despesas: R$ ${totalExpense.toFixed(2)}).
+• PONTOS DE ATENÇÃO: Gastos registrados em: [${cats || 'Sem saídas cadastradas'}].
+• RECOMENDAÇÃO ESTRATÉGICA: Mantenha um aporte constante de pelo menos 15-20% em metas de poupança automática para garantir resiliência aos seus ecossistemas de capital, Sir.`;
+
+      setAiFinanceAdvice(diagnosisText);
+      jarvisSpeak("Diagnóstico financeiro executivo concluído, Sir Henrique.");
+    } catch (err) {
+      setAiFinanceAdvice(`DIAGNÓSTICO PATRIMONIAL J.A.R.V.I.S.:\n- Liquidez Corrente: R$ ${transactions.reduce((acc, t) => t.type === 'income' ? acc + t.amount : acc - t.amount, 0).toFixed(2)}\n- Estado: Operação estável. Recomendo destinar 20% das receitas mensais para metas de crescimento patrimonial.`);
+    } finally {
+      setIsAnalyzingFinance(false);
+    }
+  };
 
   const [showAddProject, setShowAddProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -1066,37 +1158,15 @@ export default function StarkWorkspace({
       {/* Tab Selectors */}
       <div className="flex items-center border-b border-white/5 bg-black/40 p-1.5 gap-1 flex-shrink-0 overflow-x-auto scrollbar-none flex-nowrap md:p-2">
         <button
-          onClick={() => setActiveTab('calendar')}
+          onClick={() => setActiveTab('maps')}
           className={`flex-1 flex-shrink-0 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-[10px] md:text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
-            activeTab === 'calendar' 
+            activeTab === 'maps' 
               ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_10px_rgba(6,182,212,0.1)] font-mono' 
               : 'text-white/40 hover:text-white/70 hover:bg-white/[0.02]'
           }`}
         >
-          <CalendarIcon size={13} className="flex-shrink-0" />
-          <span>Agenda<span className="hidden sm:inline"> & Cronos</span></span>
-        </button>
-        <button
-          onClick={() => setActiveTab('time')}
-          className={`flex-1 flex-shrink-0 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-[10px] md:text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
-            activeTab === 'time' 
-              ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_10px_rgba(6,182,212,0.1)] font-mono' 
-              : 'text-white/40 hover:text-white/70 hover:bg-white/[0.02]'
-          }`}
-        >
-          <Clock size={13} className="flex-shrink-0" />
-          <span>Relógio<span className="hidden sm:inline"> & Alarme</span></span>
-        </button>
-        <button
-          onClick={() => setActiveTab('generator')}
-          className={`flex-1 flex-shrink-0 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-[10px] md:text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
-            activeTab === 'generator' 
-              ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_10px_rgba(6,182,212,0.1)] font-mono' 
-              : 'text-white/40 hover:text-white/70 hover:bg-white/[0.02]'
-          }`}
-        >
-          <BookOpen size={13} className="flex-shrink-0" />
-          <span>Simulados<span className="hidden sm:inline"> PDF</span></span>
+          <MapPin size={13} className="flex-shrink-0 text-cyan-400" />
+          <span>Google Maps<span className="hidden sm:inline"> Tempo Real</span></span>
         </button>
         <button
           onClick={() => setActiveTab('finance')}
@@ -1120,26 +1190,35 @@ export default function StarkWorkspace({
           <Globe size={13} className="flex-shrink-0" />
           <span>Notícias<span className="hidden sm:inline"> Google</span></span>
         </button>
-        <button
-          onClick={() => setActiveTab('projects')}
-          className={`flex-1 flex-shrink-0 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-[10px] md:text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
-            activeTab === 'projects' 
-              ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_10px_rgba(6,182,212,0.1)] font-mono' 
-              : 'text-white/40 hover:text-white/70 hover:bg-white/[0.02]'
-          }`}
-        >
-          <ListTodo size={13} className="flex-shrink-0" />
-          <span>Projetos<span className="hidden sm:inline"> Stark</span></span>
-        </button>
 
-        {/* Close Button */}
-        <button 
-          onClick={onClose}
-          className="p-2 text-white/40 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-all duration-300 flex items-center justify-center cursor-pointer"
-          title="Fechar painel"
-        >
-          <X size={14} />
-        </button>
+        {/* Window Controls (Fullscreen / Minimize / Close) */}
+        <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
+          {onToggleFullscreen && (
+            <button 
+              onClick={onToggleFullscreen}
+              className="p-2 text-white/50 hover:text-cyan-400 bg-white/5 hover:bg-white/10 rounded-lg transition-all duration-300 flex items-center justify-center cursor-pointer"
+              title={isFullscreen ? "Restaurar tamanho divididos" : "Preencher toda a tela"}
+            >
+              {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+          )}
+
+          <button 
+            onClick={onClose}
+            className="p-2 text-white/50 hover:text-rose-400 bg-white/5 hover:bg-white/10 rounded-lg transition-all duration-300 flex items-center justify-center cursor-pointer"
+            title="Minimizar para o Dock"
+          >
+            <Minus size={14} />
+          </button>
+
+          <button 
+            onClick={onClose}
+            className="p-2 text-white/50 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-all duration-300 flex items-center justify-center cursor-pointer"
+            title="Fechar painel"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Neural Link / Local Brain Status */}
@@ -1156,7 +1235,16 @@ export default function StarkWorkspace({
       </div>
 
       {/* Tab Panels Scrollable Area */}
-      <div className="flex-1 overflow-y-auto p-4 md:p-5 custom-scrollbar space-y-6">
+      <div className={`flex-1 ${activeTab === 'maps' ? 'flex flex-col p-2 overflow-hidden' : 'overflow-y-auto p-4 md:p-5 custom-scrollbar space-y-6'}`}>
+
+        {/* ---------------------------------------------------- */}
+        {/* TAB 0: GOOGLE MAPS TEMPO REAL */}
+        {/* ---------------------------------------------------- */}
+        {activeTab === 'maps' && (
+          <div className="w-full h-full flex-1 relative min-h-[550px] animate-fadeIn flex flex-col">
+            <GoogleMapsView onAskJarvis={onAskJarvisNews} jarvisSpeak={jarvisSpeak} />
+          </div>
+        )}
 
         {/* ---------------------------------------------------- */}
         {/* TAB 1: CALENDAR, EVENTS & CRONOGRAMAS */}
@@ -1910,21 +1998,69 @@ export default function StarkWorkspace({
                           </div>
                         </div>
 
-                        {/* J.A.R.V.I.S Intelligence Panel */}
+                        {/* J.A.R.V.I.S Intelligence Panel & Real-Time AI Diagnosis */}
                         <div className="bg-white/[0.01] border border-emerald-500/10 rounded-xl p-3.5 space-y-2.5 shadow-lg relative overflow-hidden">
                           <div className="absolute right-3 top-3 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                          <div className="flex items-center gap-1.5">
-                            <Sparkles size={12} className="text-emerald-400" />
-                            <h3 className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest font-mono">CONSELHO E PROTOCOLO J.A.R.V.I.S.</h3>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <Sparkles size={12} className="text-emerald-400" />
+                              <h3 className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest font-mono">CONSELHO E PROTOCOLO J.A.R.V.I.S.</h3>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleGenerateAiFinanceDiagnosis}
+                              disabled={isAnalyzingFinance}
+                              className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/20 rounded-lg text-[8px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              <Sparkles size={10} className={isAnalyzingFinance ? 'animate-spin' : ''} />
+                              <span>{isAnalyzingFinance ? 'Analisando...' : 'Diagnóstico de IA'}</span>
+                            </button>
                           </div>
-                          <p className="text-[10px] text-white/75 font-mono leading-relaxed bg-[#0b0c10] border border-white/5 p-2.5 rounded-lg">
-                            <span className="mr-1">{jarvisStatusIcon}</span>
-                            {jarvisAlert}
-                          </p>
-                          <p className="text-[10px] text-emerald-300/80 font-mono leading-relaxed bg-emerald-500/[0.02] border border-emerald-500/5 p-2 rounded-lg">
-                            {jarvisSuggestion}
-                          </p>
+                          
+                          {aiFinanceAdvice ? (
+                            <div className="bg-[#08090d] border border-emerald-500/20 p-3 rounded-lg text-xs font-mono text-emerald-200/90 leading-relaxed whitespace-pre-wrap animate-fadeIn">
+                              {aiFinanceAdvice}
+                            </div>
+                          ) : (
+                            <>
+                              <p className="text-[10px] text-white/75 font-mono leading-relaxed bg-[#0b0c10] border border-white/5 p-2.5 rounded-lg">
+                                <span className="mr-1">{jarvisStatusIcon}</span>
+                                {jarvisAlert}
+                              </p>
+                              <p className="text-[10px] text-emerald-300/80 font-mono leading-relaxed bg-emerald-500/[0.02] border border-emerald-500/5 p-2 rounded-lg">
+                                {jarvisSuggestion}
+                              </p>
+                            </>
+                          )}
                         </div>
+
+                        {/* Category Expenses Breakdown Bars */}
+                        {Object.keys(categorySpending).length > 0 && (
+                          <div className="bg-[#0a0c10] border border-white/5 p-3 rounded-xl space-y-2">
+                            <h4 className="text-[8.5px] font-bold text-white/40 uppercase tracking-widest font-mono">
+                              Distribuição de Gastos por Categoria
+                            </h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {Object.entries(categorySpending).map(([cat, amount]) => {
+                                const pct = totalExpense > 0 ? Math.round((amount / totalExpense) * 100) : 0;
+                                return (
+                                  <div key={cat} className="space-y-1 bg-white/[0.01] border border-white/5 p-2 rounded-lg">
+                                    <div className="flex justify-between text-[9px] font-mono">
+                                      <span className="text-white/80 font-semibold">{cat}</span>
+                                      <span className="text-rose-400 font-bold">R$ {amount.toFixed(2)} ({pct}%)</span>
+                                    </div>
+                                    <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                                      <div 
+                                        className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 rounded-full" 
+                                        style={{ width: `${pct}%` }} 
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Inline Quick Add Transaction Form */}
                         <div className="bg-[#0b0c10] border border-white/5 p-3.5 rounded-xl space-y-3 shadow-md">
@@ -2573,13 +2709,13 @@ export default function StarkWorkspace({
         )}
 
         {/* ---------------------------------------------------- */}
-        {/* TAB 5: GOOGLE NEWS & DISCOVER */}
+        {/* TAB 5: GOOGLE NEWS & DISCOVER (REAL-TIME AI) */}
         {/* ---------------------------------------------------- */}
         {activeTab === 'news' && (
-          <div className="space-y-5 max-w-2xl mx-auto w-full">
+          <div className="space-y-5 max-w-3xl mx-auto w-full animate-fadeIn">
             
             {/* Header / Brand */}
-            <div className="text-center flex flex-col items-center justify-center space-y-1.5 py-2">
+            <div className="text-center flex flex-col items-center justify-center space-y-1.5 py-2 relative">
               <div className="flex items-center gap-1.5 text-lg font-extrabold tracking-tight">
                 <span className="text-[#4285F4]">G</span>
                 <span className="text-[#EA4335]">o</span>
@@ -2587,22 +2723,51 @@ export default function StarkWorkspace({
                 <span className="text-[#4285F4]">g</span>
                 <span className="text-[#34A853]">l</span>
                 <span className="text-[#EA4335]">e</span>
-                <span className="text-white/80 ml-1.5 font-sans font-light tracking-widest uppercase text-xs">Notícias</span>
+                <span className="text-white/80 ml-1.5 font-sans font-light tracking-widest uppercase text-xs">Notícias em Tempo Real</span>
               </div>
-              <p className="text-[9px] text-white/45 max-w-[320px] text-center uppercase tracking-[0.2em] font-mono leading-relaxed">
-                CENTRAL MUNDIAL • SISTEMA DE DESCOBERTAS
+              <p className="text-[9px] text-white/45 max-w-[360px] text-center uppercase tracking-[0.2em] font-mono leading-relaxed">
+                FEED GLOBAL AUTO-ATUALIZÁVEL COM BUSCA GROUNDED DO GEMINI AI
               </p>
+
+              {/* Real-Time Live Control Bar */}
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-2 pt-2 border-t border-white/5 w-full">
+                <button
+                  type="button"
+                  onClick={() => refreshLiveAINews(newsCategoryFilter)}
+                  disabled={isFetchingLiveNews}
+                  className="px-3.5 py-1.5 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 rounded-xl text-[10px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(6,182,212,0.1)]"
+                >
+                  <RefreshCw size={12} className={isFetchingLiveNews ? 'animate-spin' : ''} />
+                  <span>{isFetchingLiveNews ? 'Buscando Manchetes...' : '⚡ Atualizar com IA Agora'}</span>
+                </button>
+
+                <div className="flex items-center gap-2 bg-white/[0.02] border border-white/5 px-3 py-1.5 rounded-xl text-[9px] font-mono text-white/50">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Sincronia Automática:</span>
+                  <span className="text-cyan-400 font-bold">{newsCountdown}s</span>
+                  <button
+                    type="button"
+                    onClick={() => setAutoRefreshNews(!autoRefreshNews)}
+                    className="ml-1 text-[8px] underline text-white/40 hover:text-white cursor-pointer uppercase"
+                  >
+                    {autoRefreshNews ? 'Pausar' : 'Ativar'}
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Filter Categories */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-none flex-nowrap border-b border-white/5">
-              {['Todos', 'Tecnologia', 'Ciência', 'Economia', 'Mundo'].map((cat) => {
+              {['Todos', 'Tecnologia', 'Ciência', 'Economia', 'Brasil', 'Mundo', 'Segurança'].map((cat) => {
                 const isActive = newsCategoryFilter === cat;
                 return (
                   <button
                     key={cat}
                     type="button"
-                    onClick={() => setNewsCategoryFilter(cat)}
+                    onClick={() => {
+                      setNewsCategoryFilter(cat);
+                      refreshLiveAINews(cat);
+                    }}
                     className={`flex-shrink-0 px-3.5 py-1.5 text-[9px] font-mono font-bold uppercase rounded-full border transition-all cursor-pointer ${
                       isActive
                         ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30 shadow-[0_0_8px_rgba(6,182,212,0.15)]'
@@ -2616,27 +2781,26 @@ export default function StarkWorkspace({
             </div>
 
             {/* News Stream */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              {isLoadingNews ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              {(isLoadingNews || isFetchingLiveNews) && liveNews.length === 0 ? (
                 <div className="col-span-full flex flex-col items-center justify-center py-12 space-y-3">
-                  <div className="w-6 h-6 border-2 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin" />
-                  <p className="text-[10px] text-white/30 uppercase tracking-widest font-mono">
-                    Sincronizando feed mundial...
+                  <div className="w-8 h-8 border-2 border-cyan-500/20 border-t-cyan-400 rounded-full animate-spin" />
+                  <p className="text-[10px] text-white/40 uppercase tracking-widest font-mono">
+                    Consultando fontes em tempo real via Gemini Search...
                   </p>
                 </div>
-              ) : (news || []).filter(item => {
+              ) : (liveNews || []).filter(item => {
                 if (newsCategoryFilter === 'Todos') return true;
                 return (item.category || '').toLowerCase().includes(newsCategoryFilter.toLowerCase());
               }).length === 0 ? (
                 <div className="col-span-full text-center py-10 bg-white/[0.01] rounded-2xl border border-dashed border-white/5 text-xs text-white/30 italic">
-                  Nenhuma manchete correspondente encontrada.
+                  Nenhuma manchete correspondente encontrada para esta categoria.
                 </div>
               ) : (
-                (news || []).filter(item => {
+                (liveNews || []).filter(item => {
                   if (newsCategoryFilter === 'Todos') return true;
                   return (item.category || '').toLowerCase().includes(newsCategoryFilter.toLowerCase());
                 }).map((item, idx) => {
-                  // Determine background gradient depending on category
                   let grad = 'from-blue-500/5 to-indigo-500/5';
                   let badgeColor = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
                   
@@ -2649,46 +2813,70 @@ export default function StarkWorkspace({
                   } else if ((item.category || '').toLowerCase().includes('eco') || (item.category || '').toLowerCase().includes('fin')) {
                     grad = 'from-emerald-500/5 to-teal-500/5';
                     badgeColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
-                  } else if ((item.category || '').toLowerCase().includes('mun') || (item.category || '').toLowerCase().includes('pol')) {
+                  } else if ((item.category || '').toLowerCase().includes('bra') || (item.category || '').toLowerCase().includes('mun')) {
                     grad = 'from-amber-500/5 to-orange-500/5';
                     badgeColor = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
                   }
 
+                  let sentimentColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+                  if (item.sentiment === 'Alerta') sentimentColor = 'text-rose-400 bg-rose-500/10 border-rose-500/20';
+                  else if (item.sentiment === 'Neutro') sentimentColor = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+
                   return (
                     <div 
-                      key={idx} 
-                      className={`group relative overflow-hidden bg-gradient-to-br ${grad} border border-white/5 hover:border-cyan-500/20 rounded-2xl p-4 shadow-sm hover:shadow-[0_4px_24px_rgba(6,182,212,0.05)] transition-all duration-300`}
+                      key={item.id || idx} 
+                      className={`group relative flex flex-col justify-between overflow-hidden bg-gradient-to-br ${grad} border border-white/5 hover:border-cyan-500/20 rounded-2xl p-4 shadow-sm hover:shadow-[0_4px_24px_rgba(6,182,212,0.08)] transition-all duration-300`}
                     >
-                      {/* Top Row: category and source */}
-                      <div className="flex items-center justify-between gap-2 mb-2.5">
-                        <span className={`text-[8px] font-bold tracking-widest uppercase px-2 py-0.5 rounded border ${badgeColor}`}>
-                          {item.category || 'Notícia'}
-                        </span>
-                        <div className="flex items-center gap-1.5 text-[9px] font-mono text-white/40">
-                          <Globe size={10} className="text-white/30" />
-                          <span>{item.source}</span>
-                          <span className="text-white/20">•</span>
-                          <span>Recente</span>
+                      <div>
+                        {/* Top Row: category, source, timestamp */}
+                        <div className="flex items-center justify-between gap-2 mb-2.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-[8px] font-bold tracking-widest uppercase px-2 py-0.5 rounded border ${badgeColor}`}>
+                              {item.category || 'Notícia'}
+                            </span>
+                            {item.sentiment && (
+                              <span className={`text-[8px] font-mono font-bold tracking-wider uppercase px-1.5 py-0.5 rounded border ${sentimentColor}`}>
+                                {item.sentiment}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[9px] font-mono text-white/40">
+                            <Globe size={10} className="text-white/30" />
+                            <span>{item.source}</span>
+                            <span className="text-white/20">•</span>
+                            <span className="text-cyan-400/80 font-bold">{item.timestamp || 'AO VIVO'}</span>
+                          </div>
                         </div>
+
+                        {/* Title */}
+                        <h3 className="text-xs md:text-[13px] font-bold text-white/90 group-hover:text-cyan-300 transition-colors tracking-wide leading-relaxed font-sans mb-2">
+                          {item.title}
+                        </h3>
+
+                        {/* Summary */}
+                        {item.summary && (
+                          <p className="text-[10px] text-white/50 leading-relaxed font-mono line-clamp-2 bg-black/20 p-2 rounded-lg border border-white/[0.02]">
+                            {item.summary}
+                          </p>
+                        )}
                       </div>
 
-                      {/* Title */}
-                      <h3 className="text-xs md:text-[13px] font-bold text-white/90 group-hover:text-cyan-300 transition-colors tracking-wide leading-relaxed font-sans">
-                        {item.title}
-                      </h3>
-
                       {/* Action Row */}
-                      <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-white/[0.03]">
-                        {onAskJarvisNews && (
-                          <button
-                            type="button"
-                            onClick={() => onAskJarvisNews(item.title, item.source)}
-                            className="px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 hover:text-white border border-cyan-500/15 rounded-xl text-[9px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1 cursor-pointer"
-                          >
-                            <Sparkles size={11} />
-                            <span>Análise J.A.R.V.I.S.</span>
-                          </button>
-                        )}
+                      <div className="flex items-center justify-between gap-2 mt-4 pt-3 border-t border-white/[0.03]">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setSelectedNewsAnalysis({ news: item, analysis: '', loading: true });
+                            const analysisRes = await analyzeNewsWithAI(item.title, item.source, item.category);
+                            setSelectedNewsAnalysis({ news: item, analysis: analysisRes, loading: false });
+                            jarvisSpeak(analysisRes);
+                          }}
+                          className="px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 hover:text-white border border-cyan-500/15 rounded-xl text-[9px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1 cursor-pointer"
+                        >
+                          <Sparkles size={11} />
+                          <span>Análise J.A.R.V.I.S.</span>
+                        </button>
+
                         {item.url && item.url !== "#" && (
                           <a
                             href={item.url}
@@ -2706,6 +2894,60 @@ export default function StarkWorkspace({
                 })
               )}
             </div>
+
+            {/* J.A.R.V.I.S. News Analysis Modal */}
+            {selectedNewsAnalysis && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+                <div className="absolute inset-0 cursor-pointer" onClick={() => setSelectedNewsAnalysis(null)} />
+                <div className="relative w-full max-w-lg bg-[#07090e] border border-cyan-500/30 rounded-2xl p-5 space-y-4 shadow-[0_0_50px_rgba(6,182,212,0.15)] animate-scaleUp">
+                  <div className="flex items-center justify-between border-b border-cyan-500/20 pb-3">
+                    <div className="flex items-center gap-2 text-cyan-400 font-mono font-bold text-xs uppercase tracking-widest">
+                      <Sparkles size={14} />
+                      <span>Análise Executiva J.A.R.V.I.S.</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedNewsAnalysis(null)}
+                      className="text-white/40 hover:text-white cursor-pointer"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <span className="text-[9px] font-mono uppercase text-white/40 px-2 py-0.5 bg-white/5 rounded">
+                      {selectedNewsAnalysis.news.category} • {selectedNewsAnalysis.news.source}
+                    </span>
+                    <h3 className="text-sm font-bold text-white leading-snug">
+                      {selectedNewsAnalysis.news.title}
+                    </h3>
+                  </div>
+
+                  <div className="bg-[#0b0d12] border border-cyan-500/10 rounded-xl p-3.5 space-y-2">
+                    {selectedNewsAnalysis.loading ? (
+                      <div className="flex items-center justify-center py-6 gap-2 text-cyan-400 text-xs font-mono">
+                        <RefreshCw size={14} className="animate-spin" />
+                        <span>Processando vetores estratégicos da notícia...</span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-cyan-100/90 font-mono leading-relaxed whitespace-pre-wrap">
+                        {selectedNewsAnalysis.analysis}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedNewsAnalysis(null)}
+                      className="px-4 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 rounded-xl text-xs font-mono font-bold tracking-wider uppercase cursor-pointer"
+                    >
+                      CONCLUÍDO
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -33,10 +33,10 @@ import {
   Trash2,
   X,
   Volume2,
+  MapPin,
   VolumeX,
   Copy,
   Check,
-  MapPin,
   DollarSign,
   Wallet,
   Camera,
@@ -241,7 +241,8 @@ export default function App() {
     }
   };
 
-  const [workspaceTab, setWorkspaceTab] = useState<'calendar' | 'time' | 'generator' | 'finance' | 'news' | 'projects'>('calendar');
+  const [workspaceTab, setWorkspaceTab] = useState<'finance' | 'news' | 'maps'>('maps');
+  const [isWorkspaceFullscreen, setIsWorkspaceFullscreen] = useState(true);
   const [speechRate, setSpeechRate] = useState(() => parseFloat(localStorage.getItem('jarvis_speech_rate') || '1.05'));
   const [speechPitch, setSpeechPitch] = useState(() => parseFloat(localStorage.getItem('jarvis_speech_pitch') || '0.95'));
   const [selectedVoiceName, setSelectedVoiceName] = useState(() => localStorage.getItem('jarvis_speech_voice_name') || '');
@@ -1270,49 +1271,7 @@ Por favor, forneça:
             <span>GPS: {locationName}</span>
           </div>
 
-          {/* Continuous J.A.R.V.I.S. Background Listening Connection Toggle */}
-          <div className="flex items-center gap-2">
-            <motion.button
-              whileHover={{ scale: 1.05, backgroundColor: "rgba(6, 182, 212, 0.08)" }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => {
-                const newVal = !isBackgroundListening;
-                if (newVal && (!voiceProfile || !voiceProfile.calibrated)) {
-                  setIsCalibrationOpen(true);
-                  return;
-                }
-                setIsBackgroundListening(newVal);
-                localStorage.setItem('jarvis_background_listening', newVal ? 'true' : 'false');
-                if (newVal) {
-                  jarvisSpeak("Córtex Auditivo de segundo plano ativado. Diga Jarvis para me chamar.");
-                } else {
-                  jarvisSpeak("Córtex Auditivo suspenso.");
-                }
-              }}
-              className={`flex items-center gap-2 px-3 py-1.5 border rounded-xl text-[10px] font-mono tracking-wider transition-all duration-300 cursor-pointer ${
-                isBackgroundListening 
-                  ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.15)]' 
-                  : 'bg-white/[0.02] border-white/5 text-white/40 hover:text-white/70'
-              }`}
-              title="Escuta em Segundo Plano (Diga 'Jarvis' para ativar)"
-            >
-              <Mic size={10} className={isBackgroundListening ? 'animate-pulse text-cyan-400' : 'text-white/40'} />
-              <span>CONEXÃO CONTÍNUA: {isBackgroundListening ? "ON" : "OFF"}</span>
-            </motion.button>
 
-            {voiceProfile?.calibrated && (
-              <motion.button
-                whileHover={{ scale: 1.05, backgroundColor: "rgba(6, 182, 212, 0.05)" }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setIsCalibrationOpen(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/[0.02] border border-white/5 hover:border-cyan-500/20 text-white/40 hover:text-cyan-400 rounded-xl text-[10px] font-mono tracking-wider transition-all duration-300 cursor-pointer"
-                title="Recalibrar Assinatura Biométrica Vocal"
-              >
-                <RotateCcw size={10} className="text-cyan-500/60" />
-                <span>BIOMETRIA</span>
-              </motion.button>
-            )}
-          </div>
         </div>
 
         {/* Center: Glowing J.A.R.V.I.S. Core Header */}
@@ -1895,7 +1854,7 @@ Por favor, forneça:
 
         </main>
 
-        {/* Right Column: Stark Workspace Widget (Slide-out panel / Sidebar) */}
+        {/* Right Column / Fullscreen Overlay: Stark Workspace Widget */}
         <AnimatePresence>
           {showWorkspace && (
             <motion.div
@@ -1903,12 +1862,18 @@ Por favor, forneça:
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: "100%", opacity: 0 }}
               transition={{ type: "spring", damping: 30, stiffness: 220 }}
-              className="fixed inset-y-0 right-0 z-40 lg:relative lg:inset-auto w-full lg:w-1/2 h-full flex-shrink-0 border-l border-cyan-500/10 bg-[#07090e]/98 backdrop-blur-3xl shadow-[0_0_50px_rgba(0,0,0,0.8)]"
+              className={`fixed inset-y-0 right-0 z-40 h-full flex-shrink-0 border-l border-cyan-500/10 bg-[#07090e]/98 backdrop-blur-3xl shadow-[0_0_50px_rgba(0,0,0,0.8)] ${
+                isWorkspaceFullscreen || workspaceTab === 'maps'
+                  ? 'inset-0 w-full z-50'
+                  : 'lg:relative lg:inset-auto w-full lg:w-1/2'
+              }`}
             >
               <StarkWorkspace 
                 onClose={() => setShowWorkspace(false)} 
                 activeTab={workspaceTab}
                 onTabChange={setWorkspaceTab}
+                isFullscreen={isWorkspaceFullscreen}
+                onToggleFullscreen={() => setIsWorkspaceFullscreen(prev => !prev)}
                 news={news}
                 isLoadingNews={isLoadingNews}
                 onAskJarvisNews={handleAskJarvisNews}
@@ -1946,6 +1911,23 @@ Por favor, forneça:
             tooltip="Histórico" 
           />
           <DockIcon 
+            icon={<MapPin size={20} className="text-cyan-400" />} 
+            active={showWorkspace && workspaceTab === 'maps'} 
+            onClick={() => {
+              setShowWorkspace(prev => {
+                const next = !prev || workspaceTab !== 'maps';
+                if (next) {
+                  setWorkspaceTab('maps');
+                  jarvisSpeak("Sir Henrique, ativando o sistema Google Maps com rastreamento orbital em tempo real e cálculo de rotas.");
+                } else {
+                  jarvisSpeak("Google Maps ocultado.");
+                }
+                return next;
+              });
+            }} 
+            tooltip="Google Maps Tempo Real" 
+          />
+          <DockIcon 
             icon={<Globe size={20} />} 
             active={showWorkspace && workspaceTab === 'news'} 
             onClick={() => {
@@ -1963,21 +1945,21 @@ Por favor, forneça:
             tooltip="Notícias Google" 
           />
           <DockIcon 
-            icon={<ListTodo size={20} />} 
-            active={showWorkspace && workspaceTab === 'projects'} 
+            icon={<DollarSign size={20} />} 
+            active={showWorkspace && workspaceTab === 'finance'} 
             onClick={() => {
               setShowWorkspace(prev => {
-                const next = !prev || workspaceTab !== 'projects';
+                const next = !prev || workspaceTab !== 'finance';
                 if (next) {
-                  setWorkspaceTab('projects');
-                  jarvisSpeak("Sir Henrique, abrindo o painel exclusivo de Projetos e Diretrizes Stark.");
+                  setWorkspaceTab('finance');
+                  jarvisSpeak("Sir Henrique, abrindo o painel exclusivo de Gestão Financeira.");
                 } else {
-                  jarvisSpeak("Painel de Projetos ocultado.");
+                  jarvisSpeak("Painel Financeiro ocultado.");
                 }
                 return next;
               });
             }} 
-            tooltip="Projetos Stark" 
+            tooltip="Finanças AI" 
           />
           <DockIcon 
             icon={<Smartphone size={20} />} 
