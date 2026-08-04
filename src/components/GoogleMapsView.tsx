@@ -846,23 +846,23 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
       </div>
 
       {/* BOTTOM PLACE CARD / NAVIGATION STATUS BANNER */}
-      <div className="absolute bottom-3 left-3 right-3 z-10 max-w-lg mx-auto">
+      <div className="absolute bottom-20 sm:bottom-24 md:bottom-4 left-3 right-3 z-20 max-w-lg mx-auto pointer-events-auto">
         {isNavigating && navigationInfo ? (
-          <div className="bg-[#090b10]/95 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl p-4 shadow-[0_10px_40px_rgba(0,0,0,0.8)] text-white space-y-3 animate-slideUp">
+          <div className="bg-[#090b10]/95 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl p-3.5 sm:p-4 shadow-[0_10px_40px_rgba(0,0,0,0.8)] text-white space-y-3 animate-slideUp">
             <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
-              <div className="flex items-baseline gap-2">
-                <span className="text-2xl font-black text-amber-400 font-mono tracking-tight">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-xl sm:text-2xl font-black text-amber-400 font-mono tracking-tight">
                   {navigationInfo.durationMin} min
                 </span>
-                <span className="text-xs text-emerald-400 font-mono font-bold">🍃 Rota Rápida</span>
-                <span className="text-xs text-white/50 font-mono">• {navigationInfo.distanceKm} km</span>
-                <span className="text-xs text-white/50 font-mono">• Chegada {navigationInfo.etaTime}</span>
+                <span className="text-[11px] sm:text-xs text-emerald-400 font-mono font-bold">🍃 Rota Rápida</span>
+                <span className="text-[11px] sm:text-xs text-white/60 font-mono">• {navigationInfo.distanceKm} km</span>
+                <span className="text-[11px] sm:text-xs text-white/60 font-mono">• Chegada {navigationInfo.etaTime}</span>
               </div>
 
               <button
                 type="button"
                 onClick={stopNavigation}
-                className="p-2 rounded-full bg-white/10 hover:bg-rose-500/20 text-white/70 hover:text-rose-400 transition-colors cursor-pointer"
+                className="p-2 rounded-full bg-white/10 hover:bg-rose-500/20 text-white/70 hover:text-rose-400 transition-colors cursor-pointer shrink-0"
                 title="Sair da Rota"
               >
                 <X size={18} />
@@ -870,13 +870,13 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
             </div>
 
             <div className="flex items-center justify-between text-xs font-mono">
-              <div className="flex items-center gap-2 text-cyan-300">
-                <MapPin size={14} className="text-rose-500 animate-bounce" />
-                <span className="font-bold truncate max-w-[200px]">{navigationInfo.destinationName}</span>
+              <div className="flex items-center gap-2 text-cyan-300 overflow-hidden">
+                <MapPin size={14} className="text-rose-500 animate-bounce flex-shrink-0" />
+                <span className="font-bold truncate">{navigationInfo.destinationName}</span>
               </div>
 
               {isSimulatingMovement && (
-                <div className="flex items-center gap-1.5 text-[9px] text-emerald-400 font-bold uppercase tracking-widest bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                <div className="flex items-center gap-1.5 text-[9px] text-emerald-400 font-bold uppercase tracking-widest bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex-shrink-0">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                   <span>Em Movimento</span>
                 </div>
@@ -885,27 +885,27 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
           </div>
         ) : searchedPlace ? (
           /* SEARCHED PLACE DETAILS CARD */
-          <div className="bg-[#090b10]/95 backdrop-blur-2xl border border-rose-500/30 rounded-2xl p-4 shadow-2xl text-white space-y-3 animate-slideUp">
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 flex-shrink-0 mt-0.5">
+          <div className="bg-[#090b10]/95 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl p-4 shadow-[0_10px_50px_rgba(6,182,212,0.25)] text-white space-y-3 animate-slideUp">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start gap-3 overflow-hidden">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 flex-shrink-0 mt-0.5 shadow-md">
                   <MapPin size={20} />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 bg-rose-500/20 border border-rose-500/30 text-rose-300 text-[9px] font-mono font-bold rounded-full uppercase">
+                <div className="overflow-hidden">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2 py-0.5 bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 text-[9px] font-mono font-bold rounded-full uppercase">
                       Lugar Pesquisado
                     </span>
                     {searchedPlace.distanceKm !== undefined && (
-                      <span className="text-[10px] font-mono text-cyan-400">
+                      <span className="text-[10px] font-mono text-cyan-400 font-bold">
                         • {searchedPlace.distanceKm} km de você
                       </span>
                     )}
                   </div>
-                  <h3 className="text-base font-extrabold text-white font-sans mt-1">
+                  <h3 className="text-sm sm:text-base font-extrabold text-white font-sans mt-1 truncate">
                     {searchedPlace.name}
                   </h3>
-                  <p className="text-xs text-white/60 font-sans mt-0.5 line-clamp-2">
+                  <p className="text-[11px] sm:text-xs text-white/60 font-sans mt-0.5 line-clamp-1">
                     {searchedPlace.address}
                   </p>
                 </div>
@@ -914,52 +914,44 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
               <button
                 type="button"
                 onClick={() => setSearchedPlace(null)}
-                className="p-1.5 text-white/40 hover:text-white rounded-lg transition-colors cursor-pointer"
+                className="p-1.5 text-white/40 hover:text-white rounded-lg transition-colors cursor-pointer shrink-0"
               >
                 <X size={16} />
               </button>
             </div>
 
+            {/* ACTION BUTTONS - PROMINENT INICIAR ROTA */}
             <div className="flex items-center gap-2 pt-1">
               <button
                 type="button"
                 onClick={() => traceRouteTo(searchedPlace)}
-                className="flex-1 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-black font-mono font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(6,182,212,0.3)] cursor-pointer uppercase"
+                className="flex-1 py-3 bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-black font-mono font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 transition-all shadow-[0_0_25px_rgba(6,182,212,0.4)] hover:shadow-[0_0_35px_rgba(6,182,212,0.6)] cursor-pointer uppercase tracking-wider active:scale-95"
               >
-                <Navigation size={14} />
-                <span>Traçar Rota</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => traceRouteTo(searchedPlace)}
-                className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-mono font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] cursor-pointer uppercase"
-              >
-                <ArrowUpRight size={14} />
-                <span>Iniciar Navegação</span>
+                <Navigation size={16} className="animate-pulse" />
+                <span>INICIAR ROTA EM TEMPO REAL</span>
               </button>
             </div>
           </div>
         ) : (
           /* DEFAULT LOCATION CARD */
-          <div className="bg-[#090b10]/90 backdrop-blur-2xl border border-white/10 rounded-2xl p-3.5 shadow-2xl text-white flex items-center justify-between">
-            <div>
-              <p className="text-[9px] font-mono uppercase text-white/40 tracking-widest">
-                Localização Atual J.A.R.V.I.S.
+          <div className="bg-[#090b10]/95 backdrop-blur-2xl border border-cyan-500/20 rounded-2xl p-3.5 shadow-2xl text-white flex items-center justify-between gap-2">
+            <div className="overflow-hidden">
+              <p className="text-[9px] font-mono uppercase text-cyan-400/80 tracking-widest font-bold">
+                Localização Atual (GPS Tático)
               </p>
-              <h3 className="text-sm font-bold text-white font-sans flex items-center gap-1.5 mt-0.5">
-                <MapPin size={14} className="text-cyan-400" />
-                <span>{userAddress}</span>
+              <h3 className="text-xs sm:text-sm font-bold text-white font-sans flex items-center gap-1.5 mt-0.5 truncate">
+                <MapPin size={14} className="text-cyan-400 flex-shrink-0" />
+                <span className="truncate">{userAddress}</span>
               </h3>
             </div>
 
             <button
               type="button"
               onClick={() => handleSearchCategory('Supermercados')}
-              className="px-3.5 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 rounded-xl text-[10px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(6,182,212,0.15)]"
+              className="px-3 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 rounded-xl text-[10px] font-mono font-bold tracking-wider uppercase transition-all flex items-center gap-1.5 cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.2)] flex-shrink-0"
             >
               <Navigation size={12} />
-              <span>Supermercados Próximos</span>
+              <span>Rotas Próximas</span>
             </button>
           </div>
         )}

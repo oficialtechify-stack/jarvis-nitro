@@ -1947,17 +1947,17 @@ Por favor, forneça:
       </div>
 
       {/* Floating Bottom Command Dock - Interoperates cleanly with Jarvis speach synthesis */}
-      <footer className="relative z-30 pb-6 pt-2 flex justify-center">
-        <div className="bg-black/80 backdrop-blur-3xl border border-white/10 px-8 py-4 rounded-full flex items-center gap-8 shadow-[0_30px_80px_rgba(0,0,0,0.8)] ring-1 ring-white/5 transition-all hover:ring-white/10">
+      <footer className="relative z-30 pb-4 md:pb-6 pt-2 flex justify-center px-2">
+        <div className="bg-black/85 backdrop-blur-3xl border border-white/10 px-4 sm:px-8 py-2.5 sm:py-4 rounded-full flex items-center gap-4 sm:gap-8 shadow-[0_30px_80px_rgba(0,0,0,0.8)] ring-1 ring-white/5 transition-all hover:ring-white/10">
           <DockIcon 
-            icon={isListening ? <Mic size={24} className="text-white" /> : <MicOff size={24} className="text-white/40" />} 
+            icon={isListening ? <Mic size={22} className="text-white" /> : <MicOff size={22} className="text-white/40" />} 
             active={isListening} 
             onClick={handleVoiceCommand} 
             highlighted 
             tooltip="Microfone" 
           />
           <DockIcon 
-            icon={<MessageSquare size={20} />} 
+            icon={<MessageSquare size={19} />} 
             active={showHistory} 
             onClick={() => {
               setShowHistory(prev => {
@@ -1973,7 +1973,7 @@ Por favor, forneça:
             tooltip="Histórico" 
           />
           <DockIcon 
-            icon={<MapPin size={20} className="text-cyan-400" />} 
+            icon={<MapPin size={19} className="text-cyan-400" />} 
             active={showWorkspace && workspaceTab === 'maps'} 
             onClick={() => {
               setShowWorkspace(prev => {
@@ -1990,7 +1990,7 @@ Por favor, forneça:
             tooltip="Google Maps Tempo Real" 
           />
           <DockIcon 
-            icon={<Globe size={20} />} 
+            icon={<Globe size={19} />} 
             active={showWorkspace && workspaceTab === 'news'} 
             onClick={() => {
               setShowWorkspace(prev => {
@@ -2007,24 +2007,7 @@ Por favor, forneça:
             tooltip="Notícias Google" 
           />
           <DockIcon 
-            icon={<DollarSign size={20} />} 
-            active={showWorkspace && workspaceTab === 'finance'} 
-            onClick={() => {
-              setShowWorkspace(prev => {
-                const next = !prev || workspaceTab !== 'finance';
-                if (next) {
-                  setWorkspaceTab('finance');
-                  jarvisSpeak("Sir Henrique, abrindo o painel exclusivo de Gestão Financeira.");
-                } else {
-                  jarvisSpeak("Painel Financeiro ocultado.");
-                }
-                return next;
-              });
-            }} 
-            tooltip="Finanças AI" 
-          />
-          <DockIcon 
-            icon={<Smartphone size={20} />} 
+            icon={<Smartphone size={19} />} 
             active={showInstallModal} 
             onClick={() => {
               setShowInstallModal(prev => {
@@ -2038,7 +2021,7 @@ Por favor, forneça:
             tooltip="Baixar no Celular" 
           />
           <DockIcon 
-            icon={<Settings size={20} />} 
+            icon={<Settings size={19} />} 
             active={showSettings} 
             onClick={() => {
               setShowSettings(prev => !prev);

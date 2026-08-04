@@ -1169,17 +1169,6 @@ export default function StarkWorkspace({
           <span>Google Maps<span className="hidden sm:inline"> Tempo Real</span></span>
         </button>
         <button
-          onClick={() => setActiveTab('finance')}
-          className={`flex-1 flex-shrink-0 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-[10px] md:text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
-            activeTab === 'finance' 
-              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.1)] font-mono' 
-              : 'text-white/40 hover:text-white/70 hover:bg-white/[0.02]'
-          }`}
-        >
-          <DollarSign size={13} className="flex-shrink-0" />
-          <span>Finanças<span className="hidden sm:inline"> AI</span></span>
-        </button>
-        <button
           onClick={() => setActiveTab('news')}
           className={`flex-1 flex-shrink-0 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg text-[10px] md:text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
             activeTab === 'news' 
