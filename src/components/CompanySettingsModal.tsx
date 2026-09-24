@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { X, Building2, User, Briefcase, Sparkles, LogOut, Check, ShieldCheck, Globe, Save } from 'lucide-react';
-import { WillUserProfile, saveUserWillProfile } from '../lib/willService';
+import { motion } from 'motion/react';
+import { 
+  X, Building2, User, Briefcase, Sparkles, LogOut, 
+  Check, ShieldCheck, Globe, Save, Layers
+} from 'lucide-react';
+import { WillUserProfile, saveUserWillProfile, isAdminUser } from '../lib/willService';
 import ColorOrb from './ColorOrb';
 
 interface CompanySettingsModalProps {
@@ -11,6 +14,7 @@ interface CompanySettingsModalProps {
   onSaveProfile: (updated: WillUserProfile) => void;
   onLogout?: () => void;
   onViewLanding?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
@@ -19,13 +23,19 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
   profile,
   onSaveProfile,
   onLogout,
-  onViewLanding
+  onViewLanding,
+  onOpenAdmin
 }) => {
+  const isAdmin = isAdminUser(profile.email);
   const [displayName, setDisplayName] = useState(profile.displayName || '');
-  const [companyName, setCompanyName] = useState(profile.companyName || 'Minha Empresa');
-  const [role, setRole] = useState(profile.role || 'Fundador / Gestor');
+  const [companyName, setCompanyName] = useState(profile.companyName || 'Leadspay');
+  const [role, setRole] = useState(profile.role || (isAdmin ? 'Fundador & CEO' : 'Colaborador Leadspay'));
+  const [department, setDepartment] = useState(profile.department || (isAdmin ? 'Diretoria Executiva' : 'Comercial & Vendas'));
+  const [responsibilities, setResponsibilities] = useState(
+    profile.responsibilities || (isAdmin ? 'Gestão geral, metas e estratégias da Leadspay.' : 'Execução das tarefas diárias e suporte aos clientes da Leadspay.')
+  );
   const [companyDirectives, setCompanyDirectives] = useState(
-    profile.companyDirectives || 'Auxiliar nas decisões estratégicas da empresa, orientar os funcionários nas tarefas diárias, calcular rotas logísticas e manter a alta performance.'
+    profile.companyDirectives || 'Auxiliar nas decisões estratégicas da empresa, orientar os funcionários nas tarefas diárias e manter a alta performance.'
   );
   const [assistantTone, setAssistantTone] = useState<'professional' | 'mentor' | 'stark' | 'friendly'>(
     profile.assistantTone || 'mentor'
@@ -39,8 +49,10 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
     const updated: WillUserProfile = {
       ...profile,
       displayName: displayName.trim() || 'Colaborador',
-      companyName: companyName.trim() || 'Minha Empresa',
+      companyName: companyName.trim() || 'Leadspay',
       role: role.trim() || 'Membro da Equipe',
+      department: department.trim(),
+      responsibilities: responsibilities.trim(),
       companyDirectives: companyDirectives.trim(),
       assistantTone,
       updatedAt: new Date().toISOString()
@@ -65,7 +77,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-colors cursor-pointer"
+          className="absolute top-4 right-4 p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-colors cursor-pointer z-10"
         >
           <X size={18} />
         </button>
@@ -81,124 +93,177 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                 Meu WILL Individual
               </h2>
               <span className="text-[9px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono font-bold">
-                EMPRESA
+                LEADSPAY
               </span>
+              {isAdmin && (
+                <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-bold border border-amber-500/30">
+                  ADMIN
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-white/50 font-mono">
-              Configurações corporativas da sua instância exclusiva
+              O WILL lê o seu cargo e atribuições para te ajudar no dia a dia da Leadspay
             </p>
           </div>
         </div>
 
+        {/* Admin Shortcut Banner */}
+        {isAdmin && onOpenAdmin && (
+          <div className="mt-3 p-3 rounded-2xl bg-cyan-950/30 border border-cyan-500/30 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-mono text-cyan-300">
+              <ShieldCheck size={16} />
+              <span>Painel de Gestão da Leadspay</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenAdmin();
+              }}
+              className="px-3 py-1 bg-cyan-500 hover:bg-cyan-400 text-black text-[11px] font-mono font-bold rounded-lg transition-all cursor-pointer shadow-[0_0_10px_rgba(6,182,212,0.3)]"
+            >
+              Gerenciar Funcionários
+            </button>
+          </div>
+        )}
+
         {/* Form Body */}
-        <form onSubmit={handleSave} className="space-y-4 py-4 overflow-y-auto flex-1 pr-1">
+        <form onSubmit={handleSave} className="space-y-3.5 py-3 overflow-y-auto flex-1 pr-1">
           {/* User Display Name */}
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
               <User size={13} />
-              <span>Seu Nome (Como o WILL deve te chamar)</span>
+              <span>Seu Nome (Como o WILL te chama)</span>
             </label>
             <input
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Ex: Henrique, Carlos, Mariana"
-              className="w-full bg-black/60 border border-white/10 focus:border-cyan-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 font-sans focus:outline-none transition-all"
+              placeholder="Ex: Rick, Carlos, Mariana"
+              className="w-full bg-black/60 border border-white/10 focus:border-cyan-400 rounded-xl px-3.5 py-2 text-xs text-white placeholder-white/30 font-sans focus:outline-none transition-all"
             />
           </div>
 
-          {/* Company Name */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
-              <Building2 size={13} />
-              <span>Nome da Sua Empresa</span>
-            </label>
-            <input
-              type="text"
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="Ex: Minha Empresa, TechCorp, Comercial Silva"
-              className="w-full bg-black/60 border border-white/10 focus:border-cyan-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 font-sans focus:outline-none transition-all"
-            />
+          {/* Company & Department in 2 columns */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="space-y-1">
+              <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                <Building2 size={13} />
+                <span>Empresa</span>
+              </label>
+              <input
+                type="text"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                placeholder="Leadspay"
+                className="w-full bg-black/60 border border-white/10 focus:border-cyan-400 rounded-xl px-3.5 py-2 text-xs text-white placeholder-white/30 font-sans focus:outline-none transition-all"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                <Layers size={13} />
+                <span>Departamento</span>
+              </label>
+              <input
+                type="text"
+                value={department}
+                onChange={(e) => setDepartment(e.target.value)}
+                placeholder="Ex: Comercial, Marketing, Suporte"
+                className="w-full bg-black/60 border border-white/10 focus:border-cyan-400 rounded-xl px-3.5 py-2 text-xs text-white placeholder-white/30 font-sans focus:outline-none transition-all"
+              />
+            </div>
           </div>
 
           {/* Role / Cargo */}
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
               <Briefcase size={13} />
-              <span>Seu Cargo / Função na Empresa</span>
+              <span>Seu Cargo / Função na Leadspay</span>
             </label>
             <input
               type="text"
               value={role}
               onChange={(e) => setRole(e.target.value)}
-              placeholder="Ex: Fundador & CEO, Gerente de Vendas, Operacional, Suporte"
-              className="w-full bg-black/60 border border-white/10 focus:border-cyan-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-white/30 font-sans focus:outline-none transition-all"
+              placeholder="Ex: Gestor de Tráfego, SDR, Closer, Suporte ao Cliente, CEO"
+              className="w-full bg-black/60 border border-white/10 focus:border-cyan-400 rounded-xl px-3.5 py-2 text-xs text-white placeholder-white/30 font-sans focus:outline-none transition-all"
+            />
+          </div>
+
+          {/* What the employee does (Responsibilities) */}
+          <div className="space-y-1">
+            <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-cyan-300 flex items-center justify-between">
+              <span>O que você faz no dia a dia da Leadspay</span>
+              <span className="text-[10px] text-white/40 font-mono">Leitura do WILL</span>
+            </label>
+            <textarea
+              rows={2}
+              value={responsibilities}
+              onChange={(e) => setResponsibilities(e.target.value)}
+              placeholder="Descreva suas funções, metas diárias e tarefas para o WILL te apoiar com precisão cirúrgica..."
+              className="w-full bg-black/60 border border-white/10 focus:border-cyan-400 rounded-xl px-3.5 py-2 text-xs text-white placeholder-white/30 font-sans focus:outline-none transition-all resize-none"
             />
           </div>
 
           {/* Directives for WILL */}
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
               <Sparkles size={13} />
-              <span>Diretrizes e Missão para o Seu WILL</span>
+              <span>Instruções Especiais para o seu WILL</span>
             </label>
             <textarea
-              rows={3}
+              rows={2}
               value={companyDirectives}
               onChange={(e) => setCompanyDirectives(e.target.value)}
-              placeholder="Descreva como o WILL deve ajudar você e os outros funcionários da empresa..."
+              placeholder="Como o WILL deve te ajudar? Focar em fechar vendas? Criar anúncios de tráfego? Resolver tickets rápido?..."
               className="w-full bg-black/60 border border-white/10 focus:border-cyan-400 rounded-xl px-3.5 py-2 text-xs text-white placeholder-white/30 font-sans focus:outline-none transition-all resize-none"
             />
-            <p className="text-[10px] text-white/40 font-mono">
-              O WILL usará essas instruções para orientar respostas, priorizar tarefas corporativas e apoiar a equipe.
-            </p>
           </div>
 
           {/* Assistant Tone */}
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-cyan-300 block">
-              Personalidade do WILL
+              Estilo de Resposta do WILL
             </label>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { id: 'mentor', label: 'Mentor Executivo', desc: 'Estratégico, focado em metas' },
-                { id: 'stark', label: 'Estilo Stark', desc: 'Inteligente, sagaz & leal' },
-                { id: 'professional', label: 'Corporativo Direto', desc: 'Formal, objetivo e claro' },
-                { id: 'friendly', label: 'Amigável & Suporte', desc: 'Acolhedor para o time' }
+                { id: 'mentor', label: 'Mentor Executivo', desc: 'Foco em metas & estratégia' },
+                { id: 'stark', label: 'Estilo Stark', desc: 'Inteligente, sagaz & resolutivo' },
+                { id: 'professional', label: 'Corporativo Direto', desc: 'Formal e objetivo' },
+                { id: 'friendly', label: 'Amigável & Apoio', desc: 'Acolhedor para rotinas' }
               ].map((t) => (
                 <button
                   key={t.id}
                   type="button"
                   onClick={() => setAssistantTone(t.id as any)}
-                  className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  className={`p-2 rounded-xl border text-left transition-all cursor-pointer ${
                     assistantTone === t.id
                       ? 'bg-cyan-500/15 border-cyan-400 text-cyan-300'
                       : 'bg-white/[0.02] border-white/10 text-white/60 hover:text-white'
                   }`}
                 >
                   <p className="text-xs font-bold font-mono">{t.label}</p>
-                  <p className="text-[9.5px] opacity-70 font-sans mt-0.5">{t.desc}</p>
+                  <p className="text-[9px] opacity-70 font-sans mt-0.5">{t.desc}</p>
                 </button>
               ))}
             </div>
           </div>
 
           {/* Action Buttons */}
-          <div className="pt-2 flex flex-col sm:flex-row items-center gap-2">
+          <div className="pt-2">
             <button
               type="submit"
-              className="w-full sm:flex-1 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black font-mono font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all cursor-pointer uppercase tracking-wider"
+              className="w-full py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black font-mono font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all cursor-pointer uppercase tracking-wider"
             >
               {isSaved ? (
                 <>
                   <Check size={16} />
-                  <span>Configurações Salvas!</span>
+                  <span>Configurações do WILL Atualizadas!</span>
                 </>
               ) : (
                 <>
                   <Save size={15} />
-                  <span>Salvar Configurações do WILL</span>
+                  <span>Salvar Dados e Atualizar WILL</span>
                 </>
               )}
             </button>

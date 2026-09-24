@@ -2,77 +2,95 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Dados do perfil do usuário",
+      "description": "Dados do perfil individual do usuário / colaborador",
       "type": "object",
       "properties": {
-        "uid": {
-          "type": "string"
-        },
-        "email": {
-          "type": "string"
-        },
-        "displayName": {
-          "type": "string"
-        },
-        "updatedAt": {
-          "type": "string"
-        }
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "companyName": { "type": "string" },
+        "role": { "type": "string" },
+        "department": { "type": "string" },
+        "companyDirectives": { "type": "string" },
+        "assistantTone": { "type": "string" },
+        "isApproved": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
-      "required": [
-        "uid"
-      ]
+      "required": ["uid", "email"]
     },
-    "Transaction": {
-      "title": "Transaction",
-      "description": "Registro de transação financeira",
+    "LeadspayEmployee": {
+      "title": "LeadspayEmployee",
+      "description": "Colaborador cadastrado pelo administrador da Leadspay",
       "type": "object",
       "properties": {
-        "id": {
-          "type": "string"
-        },
-        "userId": {
-          "type": "string"
-        },
-        "description": {
-          "type": "string"
-        },
-        "amount": {
-          "type": "number"
-        },
-        "type": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "department": { "type": "string" },
+        "responsibilities": { "type": "string" },
+        "willDirectives": { "type": "string" },
+        "accessStatus": { 
           "type": "string",
-          "enum": [
-            "income",
-            "expense"
-          ]
+          "enum": ["liberado", "pendente", "bloqueado"]
         },
-        "category": {
-          "type": "string"
-        },
-        "date": {
-          "type": "string"
-        },
-        "createdAt": {
-          "type": "string"
-        }
+        "assignedBy": { "type": "string" },
+        "linkedUid": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
-      "required": [
-        "id",
-        "userId",
-        "description",
-        "amount",
-        "type"
-      ]
+      "required": ["id", "email", "name", "role", "accessStatus"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Histórico de conversas individuais do WILL com o usuário",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "title"]
+    },
+    "LeadspayMemory": {
+      "title": "LeadspayMemory",
+      "description": "Fatos, diretrizes corporativas e regras permanentes da Leadspay que o WILL nunca deve esquecer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "content": { "type": "string" },
+        "importance": { 
+          "type": "string",
+          "enum": ["alta", "critica", "padrao"]
+        },
+        "author": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "title", "content"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "UserProfile",
-      "description": "Documento de perfil do usuário"
+      "description": "Perfil individual e preferências do usuário"
     },
-    "/users/{userId}/transactions/{transactionId}": {
-      "schema": "Transaction",
-      "description": "Transações financeiras do usuário"
+    "/users/{userId}/conversations/{conversationId}": {
+      "schema": "Conversation",
+      "description": "Conversas individuais entre o usuário e seu WILL"
+    },
+    "/employees/{employeeId}": {
+      "schema": "LeadspayEmployee",
+      "description": "Cadastro e controle de acesso dos funcionários da Leadspay gerenciados pelo admin rickmarketing81@gmail.com"
+    },
+    "/memories/{memoryId}": {
+      "schema": "LeadspayMemory",
+      "description": "Memória permanente corporativa da Leadspay que o WILL consulta em todas as conversas"
     }
   }
 }

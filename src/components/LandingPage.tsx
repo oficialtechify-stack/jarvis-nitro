@@ -116,9 +116,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono mb-6"
         >
           <Sparkles size={14} className="text-cyan-400" />
-          <span className="font-bold">WILL Copilot 3.5</span>
+          <span className="font-bold">LEADSPAY ENTERPRISE</span>
           <span className="text-white/40">•</span>
-          <span className="text-white/70">Instância Individual por Colaborador</span>
+          <span className="text-white/70">Idealizado por Marcos Henrique (CEO)</span>
         </motion.div>
 
         {/* Main Headline */}

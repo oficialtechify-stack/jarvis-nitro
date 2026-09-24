@@ -41,9 +41,18 @@ if (typeof window !== 'undefined') {
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-const provider = new GoogleAuthProvider();
-// Adiciona o escopo do Google Agenda solicitado pelo usuário
-provider.addScope('https://www.googleapis.com/auth/calendar');
+// Provedor padrão para login seguro e direto (perfil e email, sem aviso de dados confidenciais)
+const standardProvider = new GoogleAuthProvider();
+standardProvider.setCustomParameters({
+  prompt: 'select_account'
+});
+
+// Provedor opcional apenas para integração avançada com Google Agenda
+const calendarProvider = new GoogleAuthProvider();
+calendarProvider.addScope('https://www.googleapis.com/auth/calendar');
+calendarProvider.setCustomParameters({
+  prompt: 'consent'
+});
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
@@ -70,13 +79,9 @@ export const initAuth = (
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
+    const result = await signInWithPopup(auth, standardProvider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('Failed to get access token from Firebase Auth');
-    }
-
-    cachedAccessToken = credential.accessToken;
+    cachedAccessToken = credential?.accessToken || '';
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     if (error?.code === 'auth/popup-closed-by-user' || error?.code === 'auth/cancelled-popup-request') {
@@ -87,6 +92,24 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     throw error;
   } finally {
     isSigningIn = false;
+  }
+};
+
+/**
+ * Solicita autorização específica para o Google Agenda (opcional)
+ */
+export const requestCalendarSync = async (): Promise<string | null> => {
+  try {
+    const result = await signInWithPopup(auth, calendarProvider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (credential?.accessToken) {
+      cachedAccessToken = credential.accessToken;
+      return credential.accessToken;
+    }
+    return null;
+  } catch (error: any) {
+    console.warn('Google Calendar authorization failed or cancelled:', error);
+    return null;
   }
 };
 

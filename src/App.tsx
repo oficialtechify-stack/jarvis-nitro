@@ -63,14 +63,34 @@ import StarkWorkspace from './components/StarkWorkspace';
 import VoiceCalibration from './components/VoiceCalibration';
 import LandingPage from './components/LandingPage';
 import CompanySettingsModal from './components/CompanySettingsModal';
+import LeadspayAdminModal from './components/LeadspayAdminModal';
 import { 
   WillUserProfile, 
   DEFAULT_WILL_PROFILE, 
   getUserWillProfile, 
   saveUserWillProfile, 
   loadUserConversations, 
-  saveUserConversation 
+  saveUserConversation,
+  ADMIN_EMAIL,
+  isAdminUser,
+  getFormattedMemoriesForContext,
+  seedInitialFirestoreData
 } from './lib/willService';
+
+export const WILL_INTRO_MESSAGE = `Olá! Seja muito bem-vindo ao WILL, o copiloto de inteligência artificial de alta performance da Leadspay.
+
+Fui criado e idealizado por Marcos Henrique, CEO da Leadspay, para ser o núcleo de aceleração e inteligência corporativa de toda a nossa empresa. Cada colaborador da Leadspay possui uma instância individual de mim, personalizada e adaptada exclusivamente ao seu cargo e rotina diária.
+
+Minhas principais funções incluem:
+• Mentoria e orientação especializada para o seu cargo específico na Leadspay
+• Apoio na execução de rotinas diárias, vendas e redação de materiais
+• Traçado de rotas imediatas e navegação em tempo real pelo Google Maps
+• Análise de mercado, métricas de tráfego pago e gestão de metas corporativas
+• Memória perpétua das diretrizes da empresa e comandos de voz
+
+Como posso acelerar seu trabalho na Leadspay hoje?`;
+
+export const WILL_INTRO_SPEECH = `Olá! Seja muito bem-vindo ao WILL, o copiloto de inteligência artificial da Leadspay. Fui criado e idealizado por Marcos Henrique, CEO da Leadspay, para ser o núcleo de inteligência e aceleração de toda a nossa empresa. Estou pronto para te ajudar no seu cargo, com rotas pelo Google Maps e suas tarefas diárias. Como posso acelerar seus resultados hoje?`;
 
 // --- Types ---
 interface TimeZoneData {
@@ -284,6 +304,7 @@ export default function App() {
     return true;
   });
   const [showCompanyModal, setShowCompanyModal] = useState<boolean>(false);
+  const [showAdminModal, setShowAdminModal] = useState<boolean>(false);
   const [isLoggingInGoogle, setIsLoggingInGoogle] = useState<boolean>(false);
 
   // Jarvis / Will Custom Settings State
@@ -299,7 +320,7 @@ export default function App() {
       if (currentUser) {
         const profile = await getUserWillProfile(
           currentUser.uid,
-          currentUser.displayName || 'Henrique',
+          currentUser.displayName || 'Colaborador Leadspay',
           currentUser.email || '',
           currentUser.photoURL || undefined
         );
@@ -318,6 +339,7 @@ export default function App() {
         setUserProfile(guest);
       }
     });
+    seedInitialFirestoreData();
     return () => unsubscribe();
   }, []);
 
@@ -329,19 +351,28 @@ export default function App() {
         setUser(res.user);
         const profile = await getUserWillProfile(
           res.user.uid,
-          res.user.displayName || 'Henrique',
+          res.user.displayName || 'Colaborador',
           res.user.email || '',
           res.user.photoURL || undefined
         );
         setUserProfile(profile);
         setShowLandingPage(false);
         localStorage.setItem('will_view_mode', 'terminal');
-        jarvisSpeak(`Olá ${profile.displayName}! Seu WILL individual está inicializado e conectado à empresa ${profile.companyName}. Como posso auxiliar você e sua equipe hoje?`);
+        initGlobalAudioContext();
+        
+        if (profile.isAdmin) {
+          jarvisSpeak(`Bem-vindo, Comandante Rick! Painel executivo da Leadspay online. Fui criado por Marcos Henrique para acelerar toda a nossa empresa.`);
+        } else if (profile.accessStatus === 'pendente') {
+          jarvisSpeak(`Olá ${profile.displayName}! Sua conta foi conectada à Leadspay. Fui criado por Marcos Henrique, CEO da Leadspay. O administrador Rick (${ADMIN_EMAIL}) foi notificado para liberar seu acesso ao WILL individual.`);
+        } else if (profile.accessStatus === 'bloqueado') {
+          jarvisSpeak(`Olá ${profile.displayName}. Seu acesso ao WILL individual está atualmente suspenso pelo administrador da Leadspay.`);
+        } else {
+          jarvisSpeak(`Olá ${profile.displayName}! Seja muito bem-vindo ao seu WILL individual da Leadspay. Fui idealizado por Marcos Henrique, CEO da Leadspay, para apoiar você no cargo de ${profile.role}. Já analisei suas atribuições e metas.`);
+        }
       }
     } catch (err) {
       console.error("Erro no login Google:", err);
-      // Fallback
-      alert("Não foi possível conectar com o Google no momento (verifique popups). Você pode continuar no Modo Convidado.");
+      alert("Não foi possível conectar com o Google no momento (verifique se a janela popup não foi bloqueada). Você pode continuar no Modo Convidado.");
     } finally {
       setIsLoggingInGoogle(false);
     }
@@ -649,8 +680,13 @@ export default function App() {
     }
     return [{
       id: 'default',
-      title: 'Diálogo Inicial',
-      messages: [],
+      title: 'Apresentação & Boas-vindas',
+      messages: [
+        {
+          role: 'jarvis',
+          text: WILL_INTRO_MESSAGE
+        }
+      ],
       createdAt: new Date().toISOString()
     }];
   });
@@ -1113,14 +1149,23 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
       .join('\n\n');
 
     const workspaceContext = getWorkspaceContext();
+    const memoriesContext = await getFormattedMemoriesForContext();
 
     const userCompanyContext = `
-    [PERFIL DO USUÁRIO & EMPRESA CONECTADA]:
-    - Nome: ${userProfile.displayName}
-    - Cargo / Função: ${userProfile.role}
-    - Empresa: ${userProfile.companyName}
-    - Diretrizes Corporativas para o WILL: ${userProfile.companyDirectives}
-    - Estilo de Resposta: ${userProfile.assistantTone}
+    [DADOS DO COLABORADOR E EMPRESA LEADSPAY]:
+    - Nome do Colaborador: ${userProfile.displayName}
+    - E-mail: ${userProfile.email || 'N/A'}
+    - Empresa: ${userProfile.companyName || 'Leadspay'}
+    - Criador do WILL & CEO: Marcos Henrique
+    - Cargo / Função do Colaborador: ${userProfile.role}
+    - Departamento: ${userProfile.department || 'Geral'}
+    - O QUE O FUNCIONÁRIO FAZ / SUAS ATRIBUIÇÕES NO DIA A DIA: ${userProfile.responsibilities || 'Execução de rotinas operacionais e apoio à equipe da Leadspay.'}
+    - DIRETRIZES DO WILL PARA ESSE CARGO: ${userProfile.companyDirectives}
+    - Estilo de Atendimento: ${userProfile.assistantTone || 'mentor'}
+    - Status de Acesso: ${userProfile.accessStatus || 'liberado'}
+    ${userProfile.isAdmin ? '- ATENÇÃO: Este usuário é o ADMINISTRADOR GERAL DA LEADSPAY (Rick). Forneça análises executivas, estratégias de negócios e supervisão de equipe.' : '- ATENÇÃO: Você é o copiloto individual deste colaborador na Leadspay. Fui idealizado por Marcos Henrique, CEO da Leadspay. Leia as atribuições do colaborador acima e oriente, tire dúvidas de processos, elabore mensagens/respostas e potencialize o trabalho dele nesse cargo específico.'}
+
+    ${memoriesContext}
     `;
 
     const context = `${userProfile.displayName} em sua localização física em tempo real. ${locationContext} Hora local: ${currentTime.toLocaleTimeString()}. ${newsContext}. 
@@ -1428,6 +1473,10 @@ Por favor, forneça:
         onEnterGuest={() => {
           setShowLandingPage(false);
           localStorage.setItem('will_view_mode', 'terminal');
+          initGlobalAudioContext();
+          setTimeout(() => {
+            jarvisSpeak(WILL_INTRO_SPEECH);
+          }, 450);
         }}
         isLoggingIn={isLoggingInGoogle}
       />
@@ -1500,6 +1549,20 @@ Por favor, forneça:
 
         {/* Right Side: User Profile / Google Login & Clock */}
         <div className="flex items-center gap-2.5 sm:gap-4 pointer-events-auto">
+          {/* Admin Panel Button for Rick */}
+          {user && isAdminUser(user.email || userProfile.email) && (
+            <button
+              type="button"
+              onClick={() => setShowAdminModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500/20 to-cyan-500/20 hover:from-amber-500/30 hover:to-cyan-500/30 border border-amber-500/40 text-amber-300 rounded-xl text-[10px] font-mono font-bold tracking-wider transition-all cursor-pointer shadow-[0_0_15px_rgba(245,158,11,0.2)]"
+              title="Painel de Gestão da Leadspay - Cadastrar Funcionários e Liberar Acesso"
+            >
+              <ShieldCheck size={13} className="text-amber-400" />
+              <span className="hidden sm:inline">PAINEL LEADSPAY</span>
+              <span className="sm:hidden">ADMIN</span>
+            </button>
+          )}
+
           {/* User Profile / Company Configuration Button */}
           {user ? (
             <button
@@ -1712,11 +1775,46 @@ Por favor, forneça:
                 </motion.div>
               </div>
 
+              {/* Access Status Warning Banner */}
+              {user && !isAdminUser(user?.email || userProfile.email) && userProfile.accessStatus === 'pendente' && (
+                <div className="w-full mb-6 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono text-left">
+                  <div className="flex items-start gap-2.5">
+                    <span className="text-amber-400 text-base mt-0.5">⚠️</span>
+                    <div>
+                      <span className="font-bold text-amber-300 block">
+                        Acesso ao WILL Individual da Leadspay em Análise
+                      </span>
+                      <span className="text-white/70 font-sans text-xs mt-0.5 block">
+                        Sua conta ({userProfile.email}) foi conectada. O administrador Rick (<strong className="text-cyan-300 font-mono">{ADMIN_EMAIL}</strong>) precisa liberar seu acesso para o cargo de <strong className="text-white">{userProfile.role}</strong>.
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowCompanyModal(true)}
+                    className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 rounded-xl font-bold cursor-pointer whitespace-nowrap transition-all self-start sm:self-auto"
+                  >
+                    Ver Meu Cargo
+                  </button>
+                </div>
+              )}
+
+              {user && !isAdminUser(user?.email || userProfile.email) && userProfile.accessStatus === 'bloqueado' && (
+                <div className="w-full mb-6 p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center gap-3 text-xs font-mono text-rose-300 text-left">
+                  <span className="text-rose-400 text-base">🚫</span>
+                  <div>
+                    <span className="font-bold block">Acesso Temporariamente Suspenso</span>
+                    <span className="text-white/70 font-sans text-xs mt-0.5 block">
+                      O acesso ao seu WILL foi pausado pelo administrador da Leadspay. Solicite a liberação com Rick.
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <h1 className="text-3xl md:text-4xl font-light tracking-tight text-white mb-2 font-sans">
-                Olá, <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400 font-medium">Sir Henrique</span>
+                Olá, <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400 font-medium">{userProfile.displayName}</span>
               </h1>
               <p className="text-white/40 text-xs md:text-sm tracking-widest uppercase mb-10 font-mono">
-                Como posso auxiliar seu ecossistema hoje?
+                {userProfile.companyName} • {userProfile.role}
               </p>
 
               {/* Gemini-style Suggestion Cards Grid */}
@@ -2711,6 +2809,20 @@ Por favor, forneça:
         }}
         onLogout={handleLogout}
         onViewLanding={() => setShowLandingPage(true)}
+        onOpenAdmin={() => setShowAdminModal(true)}
+      />
+
+      {/* Leadspay Admin Modal for Rick */}
+      <LeadspayAdminModal
+        isOpen={showAdminModal}
+        onClose={() => setShowAdminModal(false)}
+        currentUserEmail={user?.email || userProfile.email}
+        onEmployeeUpdated={async () => {
+          if (user) {
+            const refreshed = await getUserWillProfile(user.uid, user.displayName || undefined, user.email || undefined);
+            setUserProfile(refreshed);
+          }
+        }}
       />
 
       {/* Subtle CRT Overlay */}
