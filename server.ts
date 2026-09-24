@@ -1,6 +1,8 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import { GoogleGenAI } from "@google/genai";
 
 async function startServer() {
   const app = express();
@@ -56,9 +58,68 @@ async function startServer() {
     next();
   });
 
+  app.use(express.json({ limit: "15mb" }));
+
   // API routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.post("/api/chat", async (req, res) => {
+    try {
+      const { prompt, context, imageBase64, customKey } = req.body;
+      const apiKey = customKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+
+      if (!apiKey) {
+        return res.status(400).json({
+          error: "Chave GEMINI_API_KEY não encontrada no servidor nem configurada no cliente.",
+          code: "MISSING_API_KEY"
+        });
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+      const models = ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"];
+      
+      let lastErr: any = null;
+      for (const model of models) {
+        try {
+          const contents: any[] = [];
+          const parts: any[] = [{ text: `${context || ""}\n\nUsuário: ${prompt}` }];
+          if (imageBase64) {
+            const matches = imageBase64.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+            if (matches) {
+              parts.push({
+                inlineData: {
+                  mimeType: matches[1],
+                  data: matches[2]
+                }
+              });
+            }
+          }
+          contents.push({ role: "user", parts });
+
+          const response = await ai.models.generateContent({
+            model,
+            contents
+          });
+
+          if (response && response.text) {
+            return res.json({ text: response.text });
+          }
+        } catch (mErr: any) {
+          lastErr = mErr;
+          console.warn(`Server model ${model} failed:`, mErr?.message);
+        }
+      }
+
+      throw lastErr || new Error("Todos os modelos Gemini falharam no servidor.");
+    } catch (err: any) {
+      console.error("Server /api/chat error:", err);
+      return res.status(500).json({
+        error: err?.message || String(err),
+        status: err?.status || 500
+      });
+    }
   });
 
   // Vite middleware for development vs static asset serving for production

@@ -377,7 +377,7 @@ export const LeadspayAdminModal: React.FC<LeadspayAdminModalProps> = ({
               }`}
             >
               <Bookmark size={14} className="text-amber-400" />
-              <span>Memória do WILL ({memories.length})</span>
+              <span>Memória ({memories.length})</span>
             </button>
 
             <button
