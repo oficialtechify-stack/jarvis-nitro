@@ -48,13 +48,29 @@ import {
   Smartphone,
   Download,
   ListTodo,
-  RotateCcw
+  RotateCcw,
+  Building2,
+  LogOut,
+  Sparkles,
+  User as UserIcon
 } from 'lucide-react';
 import { getJarvisResponse, jarvisSpeak, stopJarvisSpeak, getTopWorldNews, NewsItem, initGlobalAudioContext } from './lib/gemini';
+import { auth, googleSignIn, logout, initAuth } from './lib/firebase';
+import { User, onAuthStateChanged } from 'firebase/auth';
 import NeuralCore from './components/NeuralCore';
 import ColorOrb from './components/ColorOrb';
 import StarkWorkspace from './components/StarkWorkspace';
 import VoiceCalibration from './components/VoiceCalibration';
+import LandingPage from './components/LandingPage';
+import CompanySettingsModal from './components/CompanySettingsModal';
+import { 
+  WillUserProfile, 
+  DEFAULT_WILL_PROFILE, 
+  getUserWillProfile, 
+  saveUserWillProfile, 
+  loadUserConversations, 
+  saveUserConversation 
+} from './lib/willService';
 
 // --- Types ---
 interface TimeZoneData {
@@ -141,8 +157,13 @@ const fuzzyMatchWakeWord = (rawTranscript: string): boolean => {
 
   const words = clean.split(/\s+/);
   
-  // Specific full words and phonetic phrases
+  // Specific full words and phonetic phrases (WILL + Jarvis compatibility)
   const phoneticMatches = [
+    // Will phonetic matches
+    "will", "wil", "ei will", "ei wil", "oi will", "oi wil", "ola will", "ola wil",
+    "hey will", "ok will", "copilot will", "will copilot", "ouil", "uil", "willi", "willy",
+    "william", "wilson", "wiu", "viu", "oe will", "eai will",
+    // Jarvis phonetic matches
     "jarvis", "jarbas", "gervasio", "gervas", "alves", "alvis", "chaves", "chave",
     "jadeves", "yadeves", "eijarvis", "heyjarvis", "oijarvis", "okjarvis",
     "olajarvis", "olajarbas", "jardis", "charles", "jabes", "iabis", "arves",
@@ -159,10 +180,11 @@ const fuzzyMatchWakeWord = (rawTranscript: string): boolean => {
   }
 
   for (const word of words) {
+    if (word === "will" || word === "wil" || word === "willy" || word === "wiu") return true;
     if (word.length < 3) continue;
     
     // Check roots
-    const roots = ["jarv", "jarb", "gerv", "iavi", "yavi", "jard", "gervas", "charle", "travis", "dravis", "gervis", "javis"];
+    const roots = ["will", "wil", "jarv", "jarb", "gerv", "iavi", "yavi", "jard", "gervas", "charle", "travis", "dravis", "gervis", "javis"];
     if (roots.some(root => word.includes(root))) {
       return true;
     }
@@ -251,11 +273,88 @@ function extractNavigationIntent(input: string): string | null {
 export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // Jarvis Custom Settings State
+  // User Authentication & Will Individual Profile State
+  const [user, setUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<WillUserProfile>(DEFAULT_WILL_PROFILE);
+  const [showLandingPage, setShowLandingPage] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const mode = localStorage.getItem('will_view_mode');
+      return mode !== 'terminal';
+    }
+    return true;
+  });
+  const [showCompanyModal, setShowCompanyModal] = useState<boolean>(false);
+  const [isLoggingInGoogle, setIsLoggingInGoogle] = useState<boolean>(false);
+
+  // Jarvis / Will Custom Settings State
   const [showSettings, setShowSettings] = useState(false);
   const [showWorkspace, setShowWorkspace] = useState(false);
   const [showInstallModal, setShowInstallModal] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  // Monitor Firebase Auth State
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        const profile = await getUserWillProfile(
+          currentUser.uid,
+          currentUser.displayName || 'Henrique',
+          currentUser.email || '',
+          currentUser.photoURL || undefined
+        );
+        setUserProfile(profile);
+        setShowLandingPage(false);
+        localStorage.setItem('will_view_mode', 'terminal');
+
+        // Load isolated conversations for this individual user
+        const savedConvs = await loadUserConversations(currentUser.uid);
+        if (savedConvs && savedConvs.length > 0) {
+          setConversations(savedConvs);
+          setActiveConversationId(savedConvs[0].id);
+        }
+      } else {
+        const guest = await getUserWillProfile('guest');
+        setUserProfile(guest);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    setIsLoggingInGoogle(true);
+    try {
+      const res = await googleSignIn();
+      if (res && res.user) {
+        setUser(res.user);
+        const profile = await getUserWillProfile(
+          res.user.uid,
+          res.user.displayName || 'Henrique',
+          res.user.email || '',
+          res.user.photoURL || undefined
+        );
+        setUserProfile(profile);
+        setShowLandingPage(false);
+        localStorage.setItem('will_view_mode', 'terminal');
+        jarvisSpeak(`Olá ${profile.displayName}! Seu WILL individual está inicializado e conectado à empresa ${profile.companyName}. Como posso auxiliar você e sua equipe hoje?`);
+      }
+    } catch (err) {
+      console.error("Erro no login Google:", err);
+      // Fallback
+      alert("Não foi possível conectar com o Google no momento (verifique popups). Você pode continuar no Modo Convidado.");
+    } finally {
+      setIsLoggingInGoogle(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    setUser(null);
+    setUserProfile(DEFAULT_WILL_PROFILE);
+    setShowLandingPage(true);
+    localStorage.removeItem('will_view_mode');
+    jarvisSpeak("Sessão Google encerrada com sucesso. Retornando à central de apresentação.");
+  };
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
@@ -986,7 +1085,7 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
         }));
       }, 350);
 
-      const jarvisRouteReply = `Comandante Henrique, localizei "${navQuery}" em sua posição GPS. Abrindo o mapa tático e traçando a rota completa em tempo real.`;
+      const jarvisRouteReply = `Olá ${userProfile.displayName}, localizei "${navQuery}" em sua posição GPS. Abrindo o Google Maps e traçando a rota completa em tempo real.`;
       updateActiveChatHistory([...newHistory, { role: 'jarvis', text: jarvisRouteReply }]);
       setJarvisText("Navegação Tática Ativa");
       setIsSpeaking(true);
@@ -1008,14 +1107,25 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
     const otherConversationsSummary = conversations
       .filter(c => c.id !== activeConversationId && c.messages.length > 0)
       .map(c => {
-        const snippet = c.messages.slice(-6).map(m => `${m.role === 'user' ? 'Henrique' : 'Jarvis'}: ${m.text}`).join('\n');
+        const snippet = c.messages.slice(-6).map(m => `${m.role === 'user' ? userProfile.displayName : 'WILL'}: ${m.text}`).join('\n');
         return `[Conversa Arquivada: "${c.title}" criada em ${new Date(c.createdAt).toLocaleDateString('pt-BR')}]\n${snippet}`;
       })
       .join('\n\n');
 
     const workspaceContext = getWorkspaceContext();
 
-    const context = `Henrique (clebsantos) em sua localização física em tempo real. ${locationContext} Hora local: ${currentTime.toLocaleTimeString()}. ${newsContext}. 
+    const userCompanyContext = `
+    [PERFIL DO USUÁRIO & EMPRESA CONECTADA]:
+    - Nome: ${userProfile.displayName}
+    - Cargo / Função: ${userProfile.role}
+    - Empresa: ${userProfile.companyName}
+    - Diretrizes Corporativas para o WILL: ${userProfile.companyDirectives}
+    - Estilo de Resposta: ${userProfile.assistantTone}
+    `;
+
+    const context = `${userProfile.displayName} em sua localização física em tempo real. ${locationContext} Hora local: ${currentTime.toLocaleTimeString()}. ${newsContext}. 
+    
+    ${userCompanyContext}
     
     ${workspaceContext}
 
@@ -1311,6 +1421,19 @@ Por favor, forneça:
     return d.toLocaleTimeString('pt-BR', { hour: '2-digit', hour12: false, minute: '2-digit' });
   };
 
+  if (showLandingPage) {
+    return (
+      <LandingPage
+        onLoginGoogle={handleGoogleLogin}
+        onEnterGuest={() => {
+          setShowLandingPage(false);
+          localStorage.setItem('will_view_mode', 'terminal');
+        }}
+        isLoggingIn={isLoggingInGoogle}
+      />
+    );
+  }
+
   return (
     <div className={`h-screen max-h-screen bg-[#030406] text-white font-sans selection:bg-cyan-500/10 overflow-hidden relative font-inter flex flex-col theme-${terminalTheme}`}>
       
@@ -1320,29 +1443,45 @@ Por favor, forneça:
       </div>
 
       {/* Top Header - Glass Dashboard Status */}
-      <header className="relative z-20 w-full p-4 md:p-6 flex flex-col md:flex-row justify-between items-center gap-4 bg-gradient-to-b from-black/50 to-transparent">
+      <header className="relative z-20 w-full p-3 sm:p-4 md:p-6 flex flex-col md:flex-row justify-between items-center gap-3 md:gap-4 bg-gradient-to-b from-black/60 via-black/30 to-transparent">
         
-        {/* Left Side: System Status Indicator */}
-        <div className="flex flex-wrap items-center gap-3">
+        {/* Left Side: System Status Indicator & Landing Page Switch */}
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2 px-3 py-1.5 bg-white/[0.02] border border-white/5 rounded-xl text-[10px] font-mono tracking-wider text-emerald-400">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>SISTEMA ONLINE</span>
+            <span>WILL ONLINE</span>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-white/[0.02] border border-white/5 rounded-xl text-[10px] font-mono tracking-wider text-cyan-400">
-            <MapPin size={10} className="animate-pulse text-cyan-400" />
-            <span>GPS: {locationName}</span>
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-white/[0.02] border border-white/5 rounded-xl text-[10px] font-mono tracking-wider text-cyan-400 max-w-[200px] truncate">
+            <MapPin size={10} className="animate-pulse text-cyan-400 flex-shrink-0" />
+            <span className="truncate">{locationName}</span>
           </div>
 
-
+          <button
+            type="button"
+            onClick={() => setShowLandingPage(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 hover:border-cyan-500/30 text-white/70 hover:text-cyan-300 rounded-xl text-[10px] font-mono font-semibold transition-all cursor-pointer"
+            title="Ver Apresentação do WILL"
+          >
+            <Globe size={11} className="text-cyan-400" />
+            <span>Landing Page</span>
+          </button>
         </div>
 
-        {/* Center: Glowing J.A.R.V.I.S. Core Header */}
+        {/* Center: Glowing WILL Core Header */}
         <div className="text-center flex flex-col items-center">
-          <h1 className="text-3xl font-extralight tracking-[0.4em] text-white/90 uppercase drop-shadow-[0_0_15px_rgba(255,255,255,0.1)] flex items-center gap-2">
-            J.A.R.V.I.S.
-          </h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl sm:text-3xl font-black tracking-[0.35em] text-white/95 uppercase drop-shadow-[0_0_20px_rgba(6,182,212,0.3)] font-mono">
+              WILL
+            </h1>
+            <span className="text-[9px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono font-bold uppercase tracking-wider">
+              COPILOT
+            </span>
+          </div>
+          <p className="text-[10px] text-cyan-400/80 font-mono tracking-wider mt-0.5">
+            Copiloto Individual • {userProfile.companyName}
+          </p>
           
-          {/* Dynamic Small Voice Status Dot - Replacing cluttering large text overlay */}
+          {/* Dynamic Voice Status Dot */}
           <div className="mt-1 flex items-center justify-center gap-2">
             <span className={`w-1.5 h-1.5 rounded-full ${
               isListening ? 'bg-red-500 animate-ping' : 
@@ -1350,31 +1489,71 @@ Por favor, forneça:
               isSpeaking ? 'bg-cyan-400 animate-bounce' : 
               'bg-emerald-400'
             }`} />
-            <span className="text-[9px] tracking-[0.25em] font-medium text-white/40 uppercase">
-              {isListening ? "Escutando feixes..." : 
-               isProcessing ? "Análise heurística..." : 
+            <span className="text-[9px] tracking-[0.2em] font-medium text-white/40 uppercase font-mono">
+              {isListening ? "Escutando..." : 
+               isProcessing ? "Processando..." : 
                isSpeaking ? "Transmitindo áudio..." : 
-               "Sistemas Ativos"}
+               "Núcleos Prontos"}
             </span>
           </div>
         </div>
 
-        {/* Right Side: Chronos Clock & City Zones */}
-        <div className="flex items-center gap-4 bg-black/20 backdrop-blur-md px-4 py-2 border border-white/5 rounded-xl pointer-events-auto">
-          <div className="text-right">
-            <div className="text-sm font-mono font-light text-cyan-300 tracking-widest">
-              {currentTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+        {/* Right Side: User Profile / Google Login & Clock */}
+        <div className="flex items-center gap-2.5 sm:gap-4 pointer-events-auto">
+          {/* User Profile / Company Configuration Button */}
+          {user ? (
+            <button
+              type="button"
+              onClick={() => setShowCompanyModal(true)}
+              className="flex items-center gap-2 px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-xl text-xs text-white transition-all cursor-pointer group shadow-[0_0_15px_rgba(6,182,212,0.1)]"
+              title="Configurações do Meu WILL & Empresa"
+            >
+              {user.photoURL ? (
+                <img src={user.photoURL} alt={userProfile.displayName} className="w-5 h-5 rounded-full border border-cyan-400" />
+              ) : (
+                <div className="w-5 h-5 rounded-full bg-cyan-500/20 border border-cyan-400 flex items-center justify-center text-[10px] font-bold text-cyan-300">
+                  {userProfile.displayName[0]?.toUpperCase() || 'W'}
+                </div>
+              )}
+              <div className="text-left hidden sm:block">
+                <span className="text-[11px] font-bold text-cyan-300 block leading-none truncate max-w-[100px]">
+                  {userProfile.displayName}
+                </span>
+                <span className="text-[9px] text-white/50 font-mono truncate max-w-[100px] block mt-0.5">
+                  🏢 {userProfile.companyName}
+                </span>
+              </div>
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={isLoggingInGoogle}
+              onClick={handleGoogleLogin}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black font-mono font-bold text-xs rounded-xl transition-all cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.3)] active:scale-95 disabled:opacity-50"
+            >
+              {isLoggingInGoogle ? (
+                <span className="animate-spin rounded-full h-3 w-3 border-b-2 border-black" />
+              ) : (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                  <path fill="#000000" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#000000" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#000000" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                  <path fill="#000000" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                </svg>
+              )}
+              <span className="hidden sm:inline">Entrar com Google</span>
+              <span className="sm:hidden">Login</span>
+            </button>
+          )}
+
+          {/* Clock */}
+          <div className="bg-black/20 backdrop-blur-md px-3 py-1.5 border border-white/5 rounded-xl">
+            <div className="text-xs sm:text-sm font-mono font-light text-cyan-300 tracking-widest text-right">
+              {currentTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
             </div>
-            <div className="text-[8px] uppercase tracking-widest font-semibold text-white/30">
-              Jaboatão (Sir HQ)
+            <div className="text-[8px] uppercase tracking-widest font-semibold text-white/30 text-right">
+              Brasília
             </div>
-          </div>
-          <div className="w-[1px] h-6 bg-white/10" />
-          <div className="hidden lg:flex items-center gap-3">
-             <div className="text-[8px] space-y-0.5">
-               <div className="text-white/30">LDN: <span className="text-white/80 font-mono">{getTimeInZone(0)}</span></div>
-               <div className="text-white/30">NYC: <span className="text-white/80 font-mono">{getTimeInZone(-4)}</span></div>
-             </div>
           </div>
         </div>
       </header>
@@ -1997,7 +2176,7 @@ Por favor, forneça:
                 const next = !prev || workspaceTab !== 'news';
                 if (next) {
                   setWorkspaceTab('news');
-                  jarvisSpeak("Sir Henrique, abrindo o painel de Notícias integrado de estilo Google.");
+                  jarvisSpeak("Abrindo painel de Notícias em tempo real.");
                 } else {
                   jarvisSpeak("Painel de Notícias ocultado.");
                 }
@@ -2007,25 +2186,11 @@ Por favor, forneça:
             tooltip="Notícias Google" 
           />
           <DockIcon 
-            icon={<Smartphone size={19} />} 
-            active={showInstallModal} 
-            onClick={() => {
-              setShowInstallModal(prev => {
-                const next = !prev;
-                if (next) {
-                  jarvisSpeak("Sir Henrique, abrindo o painel de instalação móvel para baixar o aplicativo diretamente no seu celular.");
-                }
-                return next;
-              });
-            }} 
-            tooltip="Baixar no Celular" 
-          />
-          <DockIcon 
             icon={<Settings size={19} />} 
             active={showSettings} 
             onClick={() => {
               setShowSettings(prev => !prev);
-              jarvisSpeak("Painel de configurações neurais ativado, Sir Henrique.");
+              jarvisSpeak("Painel de configurações neurais ativado.");
             }} 
             tooltip="Configurações de Voz e IA" 
           />
@@ -2535,6 +2700,19 @@ Por favor, forneça:
         }}
       />
 
+      {/* Individual WILL & Company Settings Modal */}
+      <CompanySettingsModal
+        isOpen={showCompanyModal}
+        onClose={() => setShowCompanyModal(false)}
+        profile={userProfile}
+        onSaveProfile={(updated) => {
+          setUserProfile(updated);
+          jarvisSpeak(`Diretrizes para a empresa ${updated.companyName} atualizadas com sucesso, ${updated.displayName}.`);
+        }}
+        onLogout={handleLogout}
+        onViewLanding={() => setShowLandingPage(true)}
+      />
+
       {/* Subtle CRT Overlay */}
       <div className="fixed inset-0 pointer-events-none z-50 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.02)_50%)] bg-[length:100%_4px] opacity-10" />
       <div className="fixed inset-0 pointer-events-none z-50 bg-radial-[transparent,rgba(0,0,0,0.3)]" />
@@ -2699,28 +2877,28 @@ function renderFormattedLine(line: string) {
 
 const SUGGESTIONS = [
   {
-    title: "Análise Heurística",
-    description: "Verificar integridade geral dos núcleos cognitivos e das conexões neurais do sistema.",
-    prompt: "Jarvis, faça uma análise da integridade dos seus sistemas cognitivos.",
-    icon: <ShieldCheck size={16} />
+    title: "Estratégia da Empresa",
+    description: "Alinhar metas de negócio, expansão comercial e orientação para a equipe.",
+    prompt: "Will, analise a estratégia atual da nossa empresa e me dê 3 planos práticos para acelerar resultados.",
+    icon: <Building2 size={16} />
   },
   {
-    title: "Orientação e Produtividade",
-    description: "Diretrizes heurísticas avançadas de alta performance para gerenciar o foco diário.",
-    prompt: "Jarvis, me dê algumas orientações heurísticas para maximizar minha produtividade diária.",
+    title: "Traçar Rota em Tempo Real",
+    description: "Calcular percurso imediato pelo Google Maps até o destino desejado.",
+    prompt: "Will, onde é o mercado mais próximo de mim agora e trace a rota.",
+    icon: <MapPin size={16} />
+  },
+  {
+    title: "Apoio aos Funcionários",
+    description: "Orientações para tirar dúvidas operacionais e suporte a clientes.",
+    prompt: "Will, como posso orientar minha equipe para aumentar a produtividade e o foco diário?",
     icon: <Cpu size={16} />
   },
   {
-    title: "Estratégia de Vendas",
-    description: "Criar estruturas de funis de inteligência para decolar venda de softwares.",
-    prompt: "Jarvis, quais os principais canais de funis para escala de venda de software SaaS?",
-    icon: <Zap size={16} />
-  },
-  {
-    title: "Estrutura de IA",
-    description: "Planejar ou refinar scripts em Python para nosso núcleo cognitivo.",
-    prompt: "Como estruturar um script Python robusto para expandir minha inteligência artificial?",
-    icon: <Atom size={16} />
+    title: "Gestão Financeira & Metas",
+    description: "Controle de despesas, receitas e fluxo de caixa corporativo.",
+    prompt: "Will, me ajude a analisar nosso fluxo de receitas e organizar os custos da empresa.",
+    icon: <DollarSign size={16} />
   }
 ];
 

@@ -846,7 +846,7 @@ export const GoogleMapsView: React.FC<GoogleMapsViewProps> = ({ onAskJarvis, jar
       </div>
 
       {/* BOTTOM PLACE CARD / NAVIGATION STATUS BANNER */}
-      <div className="absolute bottom-20 sm:bottom-24 md:bottom-4 left-3 right-3 z-20 max-w-lg mx-auto pointer-events-auto">
+      <div className="absolute bottom-3 sm:bottom-4 md:bottom-4 left-3 right-3 z-20 max-w-lg mx-auto pointer-events-auto">
         {isNavigating && navigationInfo ? (
           <div className="bg-[#090b10]/95 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl p-3.5 sm:p-4 shadow-[0_10px_40px_rgba(0,0,0,0.8)] text-white space-y-3 animate-slideUp">
             <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
