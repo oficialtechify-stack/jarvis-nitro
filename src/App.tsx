@@ -55,7 +55,15 @@ import {
   Sparkles,
   User as UserIcon
 } from 'lucide-react';
-import { getJarvisResponse, jarvisSpeak, stopJarvisSpeak, getTopWorldNews, NewsItem, initGlobalAudioContext } from './lib/gemini';
+import { 
+  getJarvisResponse, 
+  jarvisSpeak, 
+  stopJarvisSpeak, 
+  getTopWorldNews, 
+  NewsItem, 
+  initGlobalAudioContext,
+  createStreamAudioQueue 
+} from './lib/gemini';
 import { auth, googleSignIn, logout, initAuth } from './lib/firebase';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import NeuralCore from './components/NeuralCore';
@@ -478,7 +486,14 @@ export default function App() {
     return false;
   });
   const [primaryEngine, setPrimaryEngine] = useState(() => localStorage.getItem('jarvis_primary_engine') || 'groq');
-  const [groqModel, setGroqModel] = useState(() => localStorage.getItem('jarvis_groq_model') || 'llama-3.3-70b-versatile');
+  const [groqModel, setGroqModel] = useState(() => {
+    const saved = localStorage.getItem('jarvis_groq_model');
+    if (!saved || saved.includes('3.3')) {
+      localStorage.setItem('jarvis_groq_model', 'llama-3.1-70b-versatile');
+      return 'llama-3.1-70b-versatile';
+    }
+    return saved;
+  });
   
   const [terminalTheme, setTerminalTheme] = useState<'stark' | 'matrix' | 'mark5'>(() => {
     if (typeof window !== 'undefined') {
@@ -1237,16 +1252,40 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
 
     Diálogo ativo do canal atual de comunicação: ${JSON.stringify(newHistory.slice(-5))}`;
 
+    const audioQueue = createStreamAudioQueue((speaking) => {
+      setIsSpeaking(speaking);
+    });
+
     try {
-      const response = await getJarvisResponse(message || "Analise esta imagem, Sir.", context, finalImage || undefined);
-      if (response) {
-        updateActiveChatHistory([...newHistory, { role: 'jarvis', text: response }]);
+      setJarvisText("Processando stream...");
+      let streamedAnswer = "";
+
+      const response = await getJarvisResponse(
+        message || "Analise esta imagem, Sir.", 
+        context, 
+        finalImage || undefined,
+        // Stream SSE / tokens de texto em tempo real
+        (_token, fullText) => {
+          streamedAnswer = fullText;
+          updateActiveChatHistory([...newHistory, { role: 'jarvis', text: fullText }]);
+          setJarvisText("Transmitindo...");
+        },
+        // Envio imediato dos pedaços de texto (chunks/sentenças) ao buffer de áudio conforme são gerados
+        (sentence) => {
+          audioQueue.enqueue(sentence);
+        }
+      );
+
+      const finalResponse = response || streamedAnswer;
+      if (finalResponse) {
+        updateActiveChatHistory([...newHistory, { role: 'jarvis', text: finalResponse }]);
         setJarvisText("Online");
-        setIsSpeaking(true);
-        await jarvisSpeak(response);
-        setIsSpeaking(false);
+        if (!audioQueue.isBusy()) {
+          audioQueue.enqueue(finalResponse);
+        }
       }
     } catch (err) {
+      audioQueue.stop();
       // Exceções do sistema encaminhadas exclusivamente para os logs do console e impedidas de chegar à síntese de voz
       const exc = captureLocalException(err, 'pipeline', 'handleSendMessage', 'chat-turn-execution');
       console.error("[WILL Local Pipeline Exception - Encaminhado Exclusivamente ao Console]:", err);
@@ -2462,8 +2501,8 @@ Por favor, forneça:
                           : 'bg-white/[0.01] border-white/5 hover:border-white/10 text-white/40'
                       }`}
                     >
-                      <span className="font-bold">Gemini 3.5</span>
-                      <span className="text-[8.5px] font-mono text-white/30 lowercase italic font-normal">completo + web search</span>
+                      <span className="font-bold">Gemini 2.0 Flash</span>
+                      <span className="text-[8.5px] font-mono text-white/30 lowercase italic font-normal">alta cota + web search</span>
                     </button>
                   </div>
                 </div>
@@ -2472,15 +2511,16 @@ Por favor, forneça:
                 {primaryEngine === 'groq' && (
                   <div className="space-y-1.5 animate-fadeIn">
                     <label className="text-[10px] font-bold tracking-widest text-white/50 uppercase font-mono block">
-                      Modelo do Canal Groq
+                      Modelo do Canal Groq (Ativo)
                     </label>
                     <select
                       value={groqModel}
                       onChange={(e) => handleSaveGroqModel(e.target.value)}
                       className="w-full bg-black/90 border border-white/10 rounded-xl px-3 py-2 text-xs text-white/80 focus:outline-none focus:border-cyan-500/30 font-mono tracking-wide cursor-pointer"
                     >
-                      <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile (Qualidade)</option>
-                      <option value="llama3-8b-8192">llama3-8b-8192 (Ultra Rápido)</option>
+                      <option value="llama-3.1-70b-versatile">llama-3.1-70b-versatile (Qualidade & Velocidade - Padrão)</option>
+                      <option value="llama3-70b-8192">llama3-70b-8192 (Estabilidade Groq)</option>
+                      <option value="llama-3.1-8b-instant">llama-3.1-8b-instant (Ultra Rápido)</option>
                       <option value="mixtral-8x7b-32768">mixtral-8x7b-32768 (Balanceado)</option>
                     </select>
                   </div>

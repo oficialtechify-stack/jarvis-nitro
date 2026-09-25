@@ -63,26 +63,45 @@ export function getSavedSpeechSettings(): SpeechSettings {
       voiceName: '',
       useLocalAlways: false,
       primaryEngine: 'groq',
-      groqModel: 'llama-3.3-70b-versatile',
+      groqModel: 'llama-3.1-70b-versatile',
     };
+  }
+  let savedModel = localStorage.getItem('jarvis_groq_model') || 'llama-3.1-70b-versatile';
+  // Migração automática de modelo descontinuado (llama-3.3-70b-versatile gerava erro 404 na Groq)
+  if (savedModel === 'llama-3.3-70b-versatile' || savedModel.includes('3.3')) {
+    savedModel = 'llama-3.1-70b-versatile';
+    localStorage.setItem('jarvis_groq_model', 'llama-3.1-70b-versatile');
   }
   return {
     rate: parseFloat(localStorage.getItem('jarvis_speech_rate') || '1.05'),
     pitch: parseFloat(localStorage.getItem('jarvis_speech_pitch') || '0.95'),
     voiceName: localStorage.getItem('jarvis_speech_voice_name') || '',
     useLocalAlways: false, // Force false as requested by user ("não quero voz local")
-    primaryEngine: localStorage.getItem('jarvis_primary_engine') || 'groq',       // Default to Groq
-    groqModel: localStorage.getItem('jarvis_groq_model') || 'llama-3.3-70b-versatile',
+    primaryEngine: localStorage.getItem('jarvis_primary_engine') || 'groq',
+    groqModel: savedModel,
   };
 }
 
-export async function getGroqResponse(prompt: string, context: string) {
+export async function getGroqResponse(
+  prompt: string, 
+  context: string,
+  onTokenChunk?: (token: string, fullText: string) => void,
+  onSentenceComplete?: (sentence: string) => void
+): Promise<string> {
   if (!groqApiKey) {
     throw new Error("Missing Groq API Key");
   }
 
   const settings = getSavedSpeechSettings();
-  const selectedModel = settings.groqModel || "llama-3.3-70b-versatile";
+  const configuredModel = settings.groqModel || "llama-3.1-70b-versatile";
+
+  // Lista de modelos válidos e ativos na Groq (com contingência para evitar erro 404)
+  const candidateModels = [
+    configuredModel,
+    "llama-3.1-70b-versatile",
+    "llama3-70b-8192",
+    "llama-3.1-8b-instant"
+  ].filter((m, idx, self) => m && self.indexOf(m) === idx && m !== 'llama-3.3-70b-versatile');
 
   const systemMessage = `SISTEMA: Você é o WILL, o copiloto de inteligência artificial corporativo e pessoal avançado da LEADSPAY.
   
@@ -100,53 +119,131 @@ export async function getGroqResponse(prompt: string, context: string) {
   
   CONTEXTO: ${context || "Central de Comando Corporativa do WILL na Leadspay"}.`;
 
-  let responseText = '';
-  try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${groqApiKey}`
-      },
-      body: JSON.stringify({
-        model: selectedModel,
-        messages: [
-          { role: "system", content: systemMessage },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 1536
-      })
-    });
+  let lastErr: any = null;
+  const isStreaming = !!(onTokenChunk || onSentenceComplete);
 
-    if (!response.ok) {
-      responseText = await response.text();
-      const statusErr = new Error(`Groq API error status ${response.status}: ${responseText}`);
-      captureLocalException(statusErr, 'groq', 'getGroqResponse HTTP call', `status-${response.status}`);
-      throw statusErr;
-    }
-
-    let data: any;
+  for (const selectedModel of candidateModels) {
+    let responseText = '';
     try {
-      data = await response.json();
-    } catch (jsonErr) {
-      captureParsingError('Groq', responseText, jsonErr, 'groq-json-parse');
-      throw jsonErr;
-    }
+      console.log(`[Groq Pipeline] Executando chamada para modelo: ${selectedModel} (Stream SSE: ${isStreaming})`);
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${groqApiKey}`
+        },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: [
+            { role: "system", content: systemMessage },
+            { role: "user", content: prompt }
+          ],
+          temperature: 0.7,
+          max_tokens: 1536,
+          stream: isStreaming
+        })
+      });
 
-    const content = data.choices?.[0]?.message?.content;
-    if (!content || typeof content !== 'string') {
-      const emptyErr = new Error("Groq API retornou estrutura de dados sem choices válidos.");
-      captureParsingError('Groq', data, emptyErr, 'groq-empty-choices');
-      throw emptyErr;
-    }
+      if (!response.ok) {
+        responseText = await response.text();
+        const statusErr = new Error(`Groq API error status ${response.status}: ${responseText}`);
+        if (response.status === 404) {
+          console.warn(`[Groq 404 Intercepted] Modelo ${selectedModel} indisponível. Tentando próximo modelo ativo da Groq...`);
+          lastErr = statusErr;
+          continue; // Tenta o próximo modelo ativo
+        }
+        captureLocalException(statusErr, 'groq', 'getGroqResponse HTTP call', `status-${response.status}`);
+        throw statusErr;
+      }
 
-    return content;
-  } catch (groqError: any) {
-    // Encaminhado exclusivamente para o log do console
-    console.error("[Groq Pipeline Engine Error]:", groqError);
-    throw groqError;
+      // Suporte a Server-Sent Events (SSE) streaming para reduzir o tempo de espera
+      if (isStreaming && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let fullText = "";
+        let buffer = "";
+        let sentenceAccumulator = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith(":")) continue;
+            if (trimmed === "data: [DONE]") continue;
+
+            if (trimmed.startsWith("data: ")) {
+              try {
+                const jsonStr = trimmed.substring(6);
+                const parsed = JSON.parse(jsonStr);
+                const delta = parsed.choices?.[0]?.delta?.content || "";
+                if (delta) {
+                  fullText += delta;
+                  sentenceAccumulator += delta;
+                  if (onTokenChunk) onTokenChunk(delta, fullText);
+
+                  // Detecção de pontuação para envio imediato ao módulo de áudio/áudio-buffer
+                  const match = sentenceAccumulator.match(/^([\s\S]*?[.!?\n]+)([\s\S]*)$/);
+                  if (match && match[1].trim().length >= 10) {
+                    const readySentence = match[1].trim();
+                    sentenceAccumulator = match[2];
+                    if (onSentenceComplete) {
+                      onSentenceComplete(readySentence);
+                    }
+                  }
+                }
+              } catch {
+                // Fragmento JSON parcial
+              }
+            }
+          }
+        }
+
+        // Enviar resto acumulado ao áudio
+        if (sentenceAccumulator.trim() && onSentenceComplete) {
+          onSentenceComplete(sentenceAccumulator.trim());
+        }
+
+        if (fullText) {
+          return fullText;
+        }
+      }
+
+      // Retorno não-streaming padrão
+      let data: any;
+      try {
+        data = await response.json();
+      } catch (jsonErr) {
+        captureParsingError('Groq', responseText, jsonErr, 'groq-json-parse');
+        throw jsonErr;
+      }
+
+      const content = data.choices?.[0]?.message?.content;
+      if (!content || typeof content !== 'string') {
+        const emptyErr = new Error("Groq API retornou estrutura de dados sem choices válidos.");
+        captureParsingError('Groq', data, emptyErr, 'groq-empty-choices');
+        throw emptyErr;
+      }
+
+      if (onTokenChunk) onTokenChunk(content, content);
+      if (onSentenceComplete) onSentenceComplete(content);
+      return content;
+    } catch (groqError: any) {
+      lastErr = groqError;
+      if (groqError?.message?.includes("404")) {
+        continue;
+      }
+      console.error("[Groq Pipeline Engine Error]:", groqError);
+      throw groqError;
+    }
   }
+
+  throw lastErr || new Error("Todos os modelos Groq testados falharam.");
 }
 
 function needsWebSearch(prompt: string): boolean {
@@ -192,19 +289,20 @@ function parseBase64Image(base64Url: string) {
 }
 
 async function callGeminiWithFallback(params: any): Promise<any> {
-  const models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"];
+  // Modelos otimizados com cotas gratuitas maiores e menor latência (gemini-2.0-flash e gemini-1.5-flash)
+  const models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash", "gemini-flash-latest"];
   let lastError: any = null;
   
   for (const model of models) {
     try {
-      console.log(`Trying Gemini with model: ${model}`);
+      console.log(`[Gemini Pipeline] Chamando modelo: ${model}`);
       const response = await ai.models.generateContent({
         ...params,
         model: model
       });
       return response;
     } catch (err: any) {
-      console.warn(`Model ${model} failed in fallback wrapper:`, err);
+      console.warn(`[Gemini Fallback] Modelo ${model} falhou:`, err);
       lastError = err;
       const errMsg = err?.message?.toLowerCase() || "";
       if (
@@ -222,7 +320,89 @@ async function callGeminiWithFallback(params: any): Promise<any> {
       continue;
     }
   }
-  throw lastError || new Error("All fallback models failed");
+  throw lastError || new Error("Todos os modelos Gemini de fallback falharam.");
+}
+
+async function callGeminiStreamWithFallback(
+  params: any,
+  onTokenChunk?: (token: string, fullText: string) => void,
+  onSentenceComplete?: (sentence: string) => void
+): Promise<{ text: string; functionCalls?: any[] }> {
+  // Modelos com alta cota e suporte a streaming de baixa latência
+  const models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash", "gemini-flash-latest"];
+  let lastError: any = null;
+
+  for (const model of models) {
+    try {
+      console.log(`[Gemini Stream SSE] Executando stream com modelo: ${model}`);
+      const responseStream = await ai.models.generateContentStream({
+        ...params,
+        model: model
+      });
+
+      let fullText = "";
+      let sentenceAccumulator = "";
+      const collectedFunctionCalls: any[] = [];
+
+      for await (const chunk of responseStream) {
+        if (chunk.functionCalls && chunk.functionCalls.length > 0) {
+          collectedFunctionCalls.push(...chunk.functionCalls);
+        }
+        const delta = chunk.text || "";
+        if (delta) {
+          fullText += delta;
+          sentenceAccumulator += delta;
+          if (onTokenChunk) onTokenChunk(delta, fullText);
+
+          // Disparo de sentenças em tempo real para o módulo de áudio/áudio-buffer
+          const match = sentenceAccumulator.match(/^([\s\S]*?[.!?\n]+)([\s\S]*)$/);
+          if (match && match[1].trim().length >= 10) {
+            const readySentence = match[1].trim();
+            sentenceAccumulator = match[2];
+            if (onSentenceComplete) {
+              onSentenceComplete(readySentence);
+            }
+          }
+        }
+      }
+
+      if (sentenceAccumulator.trim() && onSentenceComplete) {
+        onSentenceComplete(sentenceAccumulator.trim());
+      }
+
+      return {
+        text: fullText,
+        functionCalls: collectedFunctionCalls.length > 0 ? collectedFunctionCalls : undefined
+      };
+    } catch (err: any) {
+      console.warn(`[Gemini Stream Fallback] Modelo ${model} falhou:`, err);
+      lastError = err;
+      const errMsg = err?.message?.toLowerCase() || "";
+      if (
+        errMsg.includes("429") || 
+        errMsg.includes("quota") || 
+        errMsg.includes("rate limit") || 
+        errMsg.includes("limit exceeded") || 
+        errMsg.includes("user has exceeded") || 
+        errMsg.includes("overloaded") || 
+        errMsg.includes("internal") ||
+        errMsg.includes("exhausted")
+      ) {
+        continue;
+      }
+      continue;
+    }
+  }
+
+  // Contingência síncrona
+  const syncFallback = await callGeminiWithFallback(params);
+  const text = syncFallback.text || "";
+  if (onTokenChunk) onTokenChunk(text, text);
+  if (onSentenceComplete) onSentenceComplete(text);
+  return {
+    text,
+    functionCalls: syncFallback.functionCalls
+  };
 }
 
 function classifyUserIntent(prompt: string): 'information_or_question' | 'execution' {
@@ -361,7 +541,13 @@ async function fetchYoutubeMetadata(url: string): Promise<{ title: string; autho
   };
 }
 
-export async function getJarvisResponse(prompt: string, context: string, imageBase64?: string) {
+export async function getJarvisResponse(
+  prompt: string, 
+  context: string, 
+  imageBase64?: string,
+  onTokenChunk?: (token: string, fullText: string) => void,
+  onSentenceComplete?: (sentence: string) => void
+) {
   let enrichedContext = context;
   const foundUrls = prompt.match(/(https?:\/\/[^\s]+|www\.[^\s]+)/gi);
   if (foundUrls && foundUrls.length > 0) {
@@ -401,7 +587,7 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
     if (groqApiKey) {
       try {
         console.log("Jarvis Direct Text Route: Question/Doubt/Info. Routing to Groq for instant text response...");
-        const groqText = await getGroqResponse(prompt, enrichedContext);
+        const groqText = await getGroqResponse(prompt, enrichedContext, onTokenChunk, onSentenceComplete);
         if (groqText) {
           return groqText;
         }
@@ -757,7 +943,7 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
       });
     }
 
-    const response = await callGeminiWithFallback({
+    const response = await callGeminiStreamWithFallback({
       contents: [
         {
           role: "user",
@@ -784,7 +970,7 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
         ],
         toolConfig: { includeServerSideToolInvocations: true } as any
       }
-    });
+    }, onTokenChunk, onSentenceComplete);
 
     // Tratar Execução de Função (Function Calling)
     const functionCalls = response.functionCalls;
@@ -1145,7 +1331,7 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
 
       // Pedir para o Gemini formular a resposta natural em caráter após executar a ação
       try {
-        const confirmResponse = await callGeminiWithFallback({
+        const confirmResponse = await callGeminiStreamWithFallback({
           contents: [{
             role: "user",
             parts: [{
@@ -1154,10 +1340,13 @@ Ações realizadas nos bastidores do sistema: ${actionsLog}
 Fale em primeira pessoa como J.A.R.V.I.S. (com a elegância de sempre, chamando-o de Sir) informando que realizou a ação solicitada e que a interface lateral já foi atualizada em tempo real.`
             }]
           }]
-        });
+        }, onTokenChunk, onSentenceComplete);
         return confirmResponse.text || `Com certeza, Sir. Executei as seguintes ações com sucesso: ${actionsLog}`;
       } catch (confirmErr) {
-        return `Sir, executei os protocolos solicitados: ${actionsLog}. Tudo já está atualizado em seu painel lateral.`;
+        const fallbackText = `Sir, executei os protocolos solicitados: ${actionsLog}. Tudo já está atualizado em seu painel lateral.`;
+        if (onTokenChunk) onTokenChunk(fallbackText, fallbackText);
+        if (onSentenceComplete) onSentenceComplete(fallbackText);
+        return fallbackText;
       }
     }
 
@@ -1167,7 +1356,7 @@ Fale em primeira pessoa como J.A.R.V.I.S. (com a elegância de sempre, chamando-
     console.error("[Gemini Pipeline Engine Error - Routed to Console Only]:", error);
 
     try {
-      const groqFallback = await getGroqResponse(prompt, context);
+      const groqFallback = await getGroqResponse(prompt, context, onTokenChunk, onSentenceComplete);
       if (groqFallback) {
         return groqFallback;
       }
@@ -1352,169 +1541,249 @@ export function stopJarvisSpeak(): void {
   }
 }
 
-export async function jarvisSpeak(text: string): Promise<void> {
-  if (!text || !text.trim()) return;
+async function playBase64AudioBuffer(base64Audio: string, speechId: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    try {
+      if (currentSpeechId !== speechId) {
+        resolve();
+        return;
+      }
+      if (!globalAudioContext) {
+        initGlobalAudioContext();
+      }
+      const audioContext = globalAudioContext || new (window.AudioContext || (window as any).webkitAudioContext)();
+      activeAudioContext = audioContext;
 
-  // FILTRO DE SEGURANÇA E BLINDAGEM:
-  // Impede rigorosamente qualquer mensagem de erro de pipeline, exceção ou log do sistema
-  // de atingir o módulo de síntese de voz do Gemini.
-  if (isSystemErrorOrLog(text)) {
-    console.warn("[Voice Synthesis Guard] Exceção ou log do sistema impedido com sucesso de chegar à síntese de voz do Gemini:", text);
+      const binaryString = atob(base64Audio);
+      const arrayBuffer = new ArrayBuffer(binaryString.length);
+      const uint8Array = new Uint8Array(arrayBuffer);
+      for (let i = 0; i < binaryString.length; i++) {
+        uint8Array[i] = binaryString.charCodeAt(i);
+      }
+
+      audioContext.decodeAudioData(arrayBuffer.slice(0))
+        .then((decodedBuffer) => {
+          if (currentSpeechId !== speechId) {
+            resolve();
+            return;
+          }
+          const source = audioContext.createBufferSource();
+          activeAudioSource = source;
+          source.buffer = decodedBuffer;
+
+          const gainNode = audioContext.createGain();
+          gainNode.gain.value = 1.3;
+          source.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+
+          source.onended = () => {
+            if (activeAudioSource === source) activeAudioSource = null;
+            resolve();
+          };
+
+          if (audioContext.state === 'suspended') {
+            audioContext.resume().then(() => source.start(0)).catch(() => resolve());
+          } else {
+            source.start(0);
+          }
+        })
+        .catch((decodeError) => {
+          console.warn("Native decodeAudioData failed, falling back to raw PCM conversion...", decodeError);
+          try {
+            const safeByteLength = Math.floor(arrayBuffer.byteLength / 2) * 2;
+            const pcm16 = new Int16Array(arrayBuffer, 0, safeByteLength / 2);
+            const float32 = new Float32Array(pcm16.length);
+            for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768;
+
+            const audioBuffer = audioContext.createBuffer(1, float32.length, 24000);
+            audioBuffer.getChannelData(0).set(float32);
+
+            const source = audioContext.createBufferSource();
+            activeAudioSource = source;
+            source.buffer = audioBuffer;
+
+            const gainNode = audioContext.createGain();
+            gainNode.gain.value = 1.6;
+            source.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            source.onended = () => {
+              if (activeAudioSource === source) activeAudioSource = null;
+              resolve();
+            };
+            source.start(0);
+          } catch (pcmErr) {
+            console.error("PCM Fallback failed:", pcmErr);
+            resolve();
+          }
+        });
+    } catch (e) {
+      console.error("Audio playback setup error:", e);
+      resolve();
+    }
+  });
+}
+
+/**
+ * Sintetiza e reproduz uma única sentença imediatamente via AudioBuffer
+ */
+export async function jarvisSpeakSingleSentence(sentence: string, targetSpeechId?: number): Promise<void> {
+  const clean = sentence.trim();
+  if (!clean) return;
+
+  if (isSystemErrorOrLog(clean)) {
+    console.warn("[Voice Synthesis Guard] Sentença técnica de erro bloqueada da síntese de voz:", clean);
     return;
   }
 
-  currentSpeechId++;
-  const mySpeechId = currentSpeechId;
-
-  // Intercept and stop any ongoing speech or audio
-  if (typeof window !== 'undefined') {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    if (activeAudioSource) {
-      try { activeAudioSource.stop(); } catch (e) {}
-      activeAudioSource = null;
-    }
-    // Dispatch speaking = true
-    window.dispatchEvent(new CustomEvent('jarvis-speaking', { detail: { speaking: true, text } }));
-  }
-
+  const speechId = targetSpeechId !== undefined ? targetSpeechId : ++currentSpeechId;
   const settings = getSavedSpeechSettings();
   const now = Date.now();
-  
-  // If useLocalAlways is true, we skip Gemini TTS API (Voz Neural) entirely for maximum speed!
   const shouldTryApi = !settings.useLocalAlways && (now - lastQuotaHit) > QUOTA_COOLDOWN;
 
   let apiSuccess = false;
 
   if (shouldTryApi) {
     try {
-      console.log("Jarvis: Neural Voice Request (gemini-3.1-flash-tts-preview)");
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-tts-preview", 
-        contents: [{ 
-          parts: [{ 
-            text: `Você é o J.A.R.V.I.S. Fale este texto com elegância: ${text}` 
-          }] 
-        }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: 'Charon' },
+      // Modelos de síntese de voz com cotas otimizadas e baixa latência
+      const ttsModels = ["gemini-3.8-flash-lite-tts", "gemini-3.1-flash-tts-preview"];
+      let response: any = null;
+
+      for (const ttsModel of ttsModels) {
+        try {
+          response = await ai.models.generateContent({
+            model: ttsModel,
+            contents: [{ parts: [{ text: `Você é o J.A.R.V.I.S. Fale este texto com elegância: ${clean}` }] }],
+            config: {
+              responseModalities: [Modality.AUDIO],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: 'Charon' },
+                },
+              },
             },
-          },
-        },
-      });
+          });
+          if (response) break;
+        } catch {
+          continue;
+        }
+      }
 
-      if (currentSpeechId !== mySpeechId) return;
+      if (currentSpeechId !== speechId) return;
 
-      const audioPart = response.candidates?.[0]?.content?.parts?.find(p => !!p.inlineData);
+      const audioPart = response?.candidates?.[0]?.content?.parts?.find((p: any) => !!p.inlineData);
       const base64Audio = audioPart?.inlineData?.data;
 
       if (base64Audio) {
         apiSuccess = true;
-        await new Promise<void>(async (resolve) => {
-          try {
-            if (currentSpeechId !== mySpeechId) {
-              resolve();
-              return;
-            }
-            if (!globalAudioContext) {
-              initGlobalAudioContext();
-            }
-            const audioContext = globalAudioContext || new (window.AudioContext || (window as any).webkitAudioContext)();
-            activeAudioContext = audioContext;
-
-            const binaryString = atob(base64Audio);
-            const arrayBuffer = new ArrayBuffer(binaryString.length);
-            const uint8Array = new Uint8Array(arrayBuffer);
-            for (let i = 0; i < binaryString.length; i++) {
-              uint8Array[i] = binaryString.charCodeAt(i);
-            }
-
-            audioContext.decodeAudioData(arrayBuffer.slice(0))
-              .then((decodedBuffer) => {
-                if (currentSpeechId !== mySpeechId) {
-                  resolve();
-                  return;
-                }
-                const source = audioContext.createBufferSource();
-                activeAudioSource = source;
-                source.buffer = decodedBuffer;
-
-                const gainNode = audioContext.createGain();
-                gainNode.gain.value = 1.3; // Perfeitamente equilibrado
-                source.connect(gainNode);
-                gainNode.connect(audioContext.destination);
-
-                source.onended = () => {
-                  resolve();
-                };
-
-                if (audioContext.state === 'suspended') {
-                  audioContext.resume().then(() => source.start(0));
-                } else {
-                  source.start(0);
-                }
-              })
-              .catch((decodeError) => {
-                console.warn("Native decodeAudioData failed, falling back to raw PCM conversion...", decodeError);
-                try {
-                  // Safely determine length to prevent any odd-byte RangeError
-                  const safeByteLength = Math.floor(arrayBuffer.byteLength / 2) * 2;
-                  const pcm16 = new Int16Array(arrayBuffer, 0, safeByteLength / 2);
-                  const float32 = new Float32Array(pcm16.length);
-                  for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768;
-                  
-                  const audioBuffer = audioContext.createBuffer(1, float32.length, 24000);
-                  audioBuffer.getChannelData(0).set(float32);
-                  
-                  const source = audioContext.createBufferSource();
-                  activeAudioSource = source;
-                  source.buffer = audioBuffer;
-                  
-                  const gainNode = audioContext.createGain();
-                  gainNode.gain.value = 1.6;
-                  source.connect(gainNode);
-                  gainNode.connect(audioContext.destination);
-                  
-                  source.onended = () => resolve();
-                  source.start(0);
-                } catch (pcmErr) {
-                  console.error("PCM Fallback failed:", pcmErr);
-                  resolve();
-                }
-              });
-          } catch (e) {
-            console.error("Audio playback setup error:", e);
-            resolve();
-          }
-        });
+        await playBase64AudioBuffer(base64Audio, speechId);
       }
     } catch (error: any) {
       const errorMsg = error?.message?.toLowerCase() || "";
-      // Exceções e erros da síntese de voz encaminhados exclusivamente para o console
       console.error("[Gemini Voice Synthesis Error - Routed to Console Only]:", error);
-      captureLocalException(error, 'tts', 'jarvisSpeak', 'tts-synthesis');
+      captureLocalException(error, 'tts', 'jarvisSpeakSingleSentence', 'tts-synthesis');
       if (errorMsg.includes("429") || errorMsg.includes("quota")) lastQuotaHit = Date.now();
     }
   }
 
-  if (currentSpeechId !== mySpeechId) return;
+  if (currentSpeechId !== speechId) return;
 
-  // Fallback to Local SpeechSynthesis ONLY if explicitly enabled (user requested local voice)
-  if (!apiSuccess && settings.useLocalAlways && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    const chunks = chunkText(text);
-    for (const chunk of chunks) {
-      if (currentSpeechId !== mySpeechId) break;
-      await speakWithSpeechSynthesis(chunk, mySpeechId);
-    }
+  // Fallback to local speech synthesis if requested or if API unavailable
+  if (!apiSuccess && (settings.useLocalAlways || !shouldTryApi) && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    await speakWithSpeechSynthesis(clean, speechId);
+  }
+}
+
+/**
+ * Fila de buffer de áudio em tempo real (Stream Audio Buffer Queue):
+ * Envia pedaços de texto (chunks/sentenças) diretamente ao módulo de áudio/áudio-buffer
+ * conforme são gerados pelo stream (SSE da Groq ou stream do Gemini), reduzindo o tempo de espera.
+ */
+export class StreamAudioQueue {
+  private queue: string[] = [];
+  private isProcessing = false;
+  private currentSessionId = 0;
+  private onSpeakingChange?: (speaking: boolean, text?: string) => void;
+
+  constructor(onSpeakingChange?: (speaking: boolean, text?: string) => void) {
+    this.onSpeakingChange = onSpeakingChange;
+    this.currentSessionId = ++currentSpeechId;
   }
 
-  // Finished speaking!
-  if (typeof window !== 'undefined' && currentSpeechId === mySpeechId) {
-    window.dispatchEvent(new CustomEvent('jarvis-speaking', { detail: { speaking: false, text } }));
+  public enqueue(sentence: string) {
+    const clean = sentence.trim();
+    if (!clean) return;
+
+    if (isSystemErrorOrLog(clean)) {
+      console.warn("[StreamAudioQueue Guard] Sentença bloqueada da voz:", clean);
+      return;
+    }
+
+    this.queue.push(clean);
+    this.processQueue();
+  }
+
+  public stop() {
+    this.currentSessionId = ++currentSpeechId;
+    this.queue = [];
+    this.isProcessing = false;
+    stopJarvisSpeak();
+    if (this.onSpeakingChange) this.onSpeakingChange(false);
+  }
+
+  public isBusy(): boolean {
+    return this.isProcessing || this.queue.length > 0;
+  }
+
+  private async processQueue() {
+    if (this.isProcessing) return;
+    if (this.queue.length === 0) {
+      if (this.onSpeakingChange) this.onSpeakingChange(false);
+      return;
+    }
+
+    this.isProcessing = true;
+    const session = this.currentSessionId;
+    const sentence = this.queue.shift()!;
+
+    if (this.onSpeakingChange) this.onSpeakingChange(true, sentence);
+
+    try {
+      await jarvisSpeakSingleSentence(sentence, session);
+    } catch (e) {
+      console.warn("[StreamAudioQueue] Erro ao reproduzir sentença no buffer:", e);
+    } finally {
+      if (this.currentSessionId === session) {
+        this.isProcessing = false;
+        this.processQueue();
+      }
+    }
+  }
+}
+
+export function createStreamAudioQueue(onSpeakingChange?: (speaking: boolean, text?: string) => void) {
+  return new StreamAudioQueue(onSpeakingChange);
+}
+
+export async function jarvisSpeak(text: string): Promise<void> {
+  if (!text || !text.trim()) return;
+
+  if (isSystemErrorOrLog(text)) {
+    console.warn("[Voice Synthesis Guard] Exceção ou log do sistema impedido com sucesso de chegar à síntese de voz do Gemini:", text);
+    return;
+  }
+
+  stopJarvisSpeak();
+
+  const queue = new StreamAudioQueue((speaking) => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('jarvis-speaking', { detail: { speaking, text } }));
+    }
+  });
+
+  const chunks = chunkText(text);
+  for (const chunk of chunks) {
+    queue.enqueue(chunk);
   }
 }
 
@@ -1569,7 +1838,7 @@ O formato DEVE ser um JSON estrito (array de objetos) sem blocos de texto ou exp
 ]`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.0-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         tools: [
@@ -1619,7 +1888,7 @@ Categoria: "${category}"
 Explique o impacto direto e a recomendação estratégica para o Sir Henrique.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.0-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }]
     });
 
@@ -1701,7 +1970,7 @@ Retorne APENAS um objeto JSON válido (sem tags markdown de código e sem texto 
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.0-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         responseMimeType: "application/json",
