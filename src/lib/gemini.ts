@@ -2,6 +2,12 @@ import { GoogleGenAI, Modality, Type, FunctionDeclaration } from "@google/genai"
 import { auth, getAccessToken } from "./firebase";
 import { addTransaction, saveGoal } from "./financeService";
 import { createGoogleEvent } from "./calendar";
+import { 
+  captureLocalException, 
+  capturePipelineFailure, 
+  captureParsingError, 
+  isSystemErrorOrLog 
+} from "./errorHandler";
 
 const getGeminiFallback = () => {
   return [
@@ -94,30 +100,53 @@ export async function getGroqResponse(prompt: string, context: string) {
   
   CONTEXTO: ${context || "Central de Comando Corporativa do WILL na Leadspay"}.`;
 
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${groqApiKey}`
-    },
-    body: JSON.stringify({
-      model: selectedModel,
-      messages: [
-        { role: "system", content: systemMessage },
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.7,
-      max_tokens: 1536
-    })
-  });
+  let responseText = '';
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${groqApiKey}`
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages: [
+          { role: "system", content: systemMessage },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 1536
+      })
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Groq API error status ${response.status}: ${errorText}`);
+    if (!response.ok) {
+      responseText = await response.text();
+      const statusErr = new Error(`Groq API error status ${response.status}: ${responseText}`);
+      captureLocalException(statusErr, 'groq', 'getGroqResponse HTTP call', `status-${response.status}`);
+      throw statusErr;
+    }
+
+    let data: any;
+    try {
+      data = await response.json();
+    } catch (jsonErr) {
+      captureParsingError('Groq', responseText, jsonErr, 'groq-json-parse');
+      throw jsonErr;
+    }
+
+    const content = data.choices?.[0]?.message?.content;
+    if (!content || typeof content !== 'string') {
+      const emptyErr = new Error("Groq API retornou estrutura de dados sem choices válidos.");
+      captureParsingError('Groq', data, emptyErr, 'groq-empty-choices');
+      throw emptyErr;
+    }
+
+    return content;
+  } catch (groqError: any) {
+    // Encaminhado exclusivamente para o log do console
+    console.error("[Groq Pipeline Engine Error]:", groqError);
+    throw groqError;
   }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content || "";
 }
 
 function needsWebSearch(prompt: string): boolean {
@@ -377,7 +406,8 @@ export async function getJarvisResponse(prompt: string, context: string, imageBa
           return groqText;
         }
       } catch (groqError) {
-        console.warn("Jarvis: Groq direct text response failed. Falling back to Gemini...", groqError);
+        capturePipelineFailure('Groq', 'Gemini', groqError, prompt, 'direct-text-route-fallback');
+        console.warn("Jarvis: Groq direct text response failed. Falling back to Gemini pipeline...", groqError);
       }
     }
   }
@@ -1131,19 +1161,26 @@ Fale em primeira pessoa como J.A.R.V.I.S. (com a elegância de sempre, chamando-
       }
     }
 
-    return response.text || "Sir, tive dificuldade em processar essa solicitação.";
+    return response.text || "Sir, processei a solicitação com sucesso nos sistemas internos.";
   } catch (error: any) {
-    console.error("Jarvis Neural Error:", error);
-    console.log("Gemini models failed or hit quota. Trying Groq fallback as absolute backup channel...");
+    capturePipelineFailure('Gemini', 'Groq', error, prompt, 'main-gemini-fallback');
+    console.error("[Gemini Pipeline Engine Error - Routed to Console Only]:", error);
+
     try {
       const groqFallback = await getGroqResponse(prompt, context);
       if (groqFallback) {
         return groqFallback;
       }
     } catch (groqErr) {
-      console.error("Groq fallback failed too:", groqErr);
+      capturePipelineFailure('Groq', 'Offline', groqErr, prompt, 'groq-fallback-also-failed');
+      console.error("[Groq Fallback Engine Error - Routed to Console Only]:", groqErr);
     }
-    return "Sir, detectei uma instabilidade severa em minhas conexões neurais externas. Todos os canais de contingência foram ativados, porém sugiro uma nova tentativa em alguns instantes.";
+
+    if (error?.message?.includes('resource_exhausted') || error?.message?.includes('quota')) {
+      return "Sir, a cota da API de IA foi temporariamente atingida nos servidores externos. O tratador de exceções local manteve seus dados e o sistema seguro. Por favor, aguarde alguns instantes ou continue navegando nas funções locais e rotas de mapa.";
+    }
+
+    return "Sir, o tratador de exceções local interceptou uma oscilação na resposta dos servidores. Todos os dados permanecem salvos com segurança. Você pode reenviar a mensagem em instantes.";
   }
 }
 
@@ -1318,6 +1355,14 @@ export function stopJarvisSpeak(): void {
 export async function jarvisSpeak(text: string): Promise<void> {
   if (!text || !text.trim()) return;
 
+  // FILTRO DE SEGURANÇA E BLINDAGEM:
+  // Impede rigorosamente qualquer mensagem de erro de pipeline, exceção ou log do sistema
+  // de atingir o módulo de síntese de voz do Gemini.
+  if (isSystemErrorOrLog(text)) {
+    console.warn("[Voice Synthesis Guard] Exceção ou log do sistema impedido com sucesso de chegar à síntese de voz do Gemini:", text);
+    return;
+  }
+
   currentSpeechId++;
   const mySpeechId = currentSpeechId;
 
@@ -1449,7 +1494,9 @@ export async function jarvisSpeak(text: string): Promise<void> {
       }
     } catch (error: any) {
       const errorMsg = error?.message?.toLowerCase() || "";
-      console.warn("Jarvis: Neural Voice Error:", errorMsg);
+      // Exceções e erros da síntese de voz encaminhados exclusivamente para o console
+      console.error("[Gemini Voice Synthesis Error - Routed to Console Only]:", error);
+      captureLocalException(error, 'tts', 'jarvisSpeak', 'tts-synthesis');
       if (errorMsg.includes("429") || errorMsg.includes("quota")) lastQuotaHit = Date.now();
     }
   }

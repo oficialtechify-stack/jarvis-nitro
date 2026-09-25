@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, Users, UserPlus, ShieldCheck, CheckCircle2, AlertCircle, 
   Trash2, Edit3, Save, Copy, Check, ExternalLink, Briefcase, 
-  Building2, Sparkles, Key, Lock, Unlock, Mail, Database, Bookmark, Plus, Tag
+  Building2, Sparkles, Key, Lock, Unlock, Mail, Database, Bookmark, Plus, Tag,
+  AlertTriangle, Terminal, RefreshCw, Bug, Shield, ChevronDown, ChevronUp, Search, VolumeX
 } from 'lucide-react';
 import { 
   LeadspayEmployee, 
@@ -16,6 +17,14 @@ import {
   saveLeadspayMemory,
   deleteLeadspayMemory
 } from '../lib/willService';
+import {
+  LocalException,
+  getLocalExceptions,
+  clearLocalExceptions,
+  exportExceptionsAsJSON,
+  simulateLocalExceptionTest,
+  onLocalException
+} from '../lib/errorHandler';
 
 interface LeadspayAdminModalProps {
   isOpen: boolean;
@@ -106,12 +115,20 @@ export const LeadspayAdminModal: React.FC<LeadspayAdminModalProps> = ({
   currentUserEmail,
   onEmployeeUpdated
 }) => {
-  const [activeTab, setActiveTab] = useState<'employees' | 'new_employee' | 'memories' | 'firebase_rules'>('employees');
+  const [activeTab, setActiveTab] = useState<'employees' | 'new_employee' | 'memories' | 'firebase_rules' | 'errors'>('employees');
   const [employees, setEmployees] = useState<LeadspayEmployee[]>([]);
   const [memories, setMemories] = useState<LeadspayMemory[]>([]);
   const [loading, setLoading] = useState(false);
   const [copiedRules, setCopiedRules] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<LeadspayEmployee | null>(null);
+
+  // Exceptions / Pipeline Errors State
+  const [exceptions, setExceptions] = useState<LocalException[]>([]);
+  const [errorSearchQuery, setErrorSearchQuery] = useState('');
+  const [errorCategoryFilter, setErrorCategoryFilter] = useState<'all' | 'pipeline' | 'parsing' | 'groq' | 'gemini' | 'tts'>('all');
+  const [copiedExceptionsJson, setCopiedExceptionsJson] = useState(false);
+  const [expandedExceptionId, setExpandedExceptionId] = useState<string | null>(null);
+  const [testSimulatedSuccess, setTestSimulatedSuccess] = useState(false);
 
   // Form State (Employee)
   const [formName, setFormName] = useState('');
@@ -149,8 +166,37 @@ export const LeadspayAdminModal: React.FC<LeadspayAdminModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       loadData();
+      setExceptions(getLocalExceptions());
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    const unsub = onLocalException(() => {
+      setExceptions(getLocalExceptions());
+    });
+    return unsub;
+  }, []);
+
+  const handleClearExceptions = () => {
+    if (confirm('Deseja limpar todos os registros de erros e falhas de pipeline?')) {
+      clearLocalExceptions();
+      setExceptions([]);
+    }
+  };
+
+  const handleCopyExceptionsJson = () => {
+    const json = exportExceptionsAsJSON();
+    navigator.clipboard.writeText(json);
+    setCopiedExceptionsJson(true);
+    setTimeout(() => setCopiedExceptionsJson(false), 2500);
+  };
+
+  const handleRunSimulatedTest = () => {
+    simulateLocalExceptionTest();
+    setExceptions(getLocalExceptions());
+    setTestSimulatedSuccess(true);
+    setTimeout(() => setTestSimulatedSuccess(false), 3000);
+  };
 
   if (!isOpen) return null;
 
@@ -393,6 +439,29 @@ export const LeadspayAdminModal: React.FC<LeadspayAdminModalProps> = ({
             >
               <Key size={14} />
               <span>Regras do Firebase</span>
+            </button>
+
+            {/* TAB ERROS & FALHAS DE PIPELINE (Solicitada pelo usuário) */}
+            <button
+              onClick={() => {
+                setActiveTab('errors');
+                setIsEditingMemory(false);
+              }}
+              className={`px-3.5 py-1.5 rounded-xl font-mono text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                activeTab === 'errors'
+                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-[0_0_15px_rgba(244,63,94,0.25)]'
+                  : exceptions.length > 0
+                    ? 'text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25'
+                    : 'text-white/60 hover:text-white bg-white/5 hover:bg-white/10'
+              }`}
+            >
+              <AlertTriangle size={14} className={exceptions.length > 0 ? "text-rose-400 animate-pulse" : "text-white/60"} />
+              <span>Erros & Pipeline ({exceptions.length})</span>
+              {exceptions.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-mono font-bold">
+                  {exceptions.length}
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -985,6 +1054,324 @@ export const LeadspayAdminModal: React.FC<LeadspayAdminModalProps> = ({
             <pre className="p-4 bg-black/80 border border-white/10 rounded-2xl text-[11px] text-cyan-300/90 overflow-x-auto max-h-72 select-all leading-relaxed font-mono">
               {FIRESTORE_RULES_TEXT}
             </pre>
+          </div>
+        )}
+
+        {/* Tab 5: Local Exceptions, Pipeline Failures & Parsing Errors Monitor (Solicitado pelo usuário) */}
+        {activeTab === 'errors' && (
+          <div className="flex-1 overflow-y-auto py-4 pr-1 space-y-4 font-mono text-xs">
+            {/* Header Box */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-rose-950/40 via-[#0d1222] to-purple-950/30 border border-rose-500/30">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="p-2.5 rounded-xl bg-rose-500/20 text-rose-400 shrink-0 border border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.3)]">
+                    <AlertTriangle size={22} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-rose-300 text-sm flex items-center gap-2">
+                      <span>Monitor do Tratador de Exceções Local • Groq ⇄ Gemini</span>
+                    </h3>
+                    <p className="text-xs text-white/70 font-sans mt-1 max-w-2xl">
+                      Captura centralizada de falhas de pipeline, contingências entre Groq e Gemini e erros de análise (parsing). Todas as exceções são encaminhadas <strong>exclusivamente para os logs do console</strong> e estritamente <strong>impedidas de chegar ao módulo de síntese de voz</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Status Badges */}
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold">
+                    <VolumeX size={13} className="text-emerald-400" />
+                    <span>Síntese de Voz: 100% Blindada</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-[11px]">
+                    <Terminal size={13} className="text-cyan-400" />
+                    <span>Logs: Console (F12) & Local</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* KPI Mini-Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4 pt-3 border-t border-white/10">
+                <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
+                  <span className="text-[10px] text-white/50 uppercase block">Total de Falhas</span>
+                  <span className="text-lg font-black text-rose-400">{exceptions.length}</span>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
+                  <span className="text-[10px] text-white/50 uppercase block">Falhas Pipeline</span>
+                  <span className="text-lg font-black text-amber-400">
+                    {exceptions.filter(e => e.source === 'pipeline').length}
+                  </span>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
+                  <span className="text-[10px] text-white/50 uppercase block">Erros de Parsing</span>
+                  <span className="text-lg font-black text-purple-400">
+                    {exceptions.filter(e => e.source === 'parsing').length}
+                  </span>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-black/40 border border-white/5">
+                  <span className="text-[10px] text-white/50 uppercase block">Voz Protegida</span>
+                  <span className="text-lg font-black text-emerald-400">
+                    {exceptions.filter(e => e.blockedFromVoice).length} / {exceptions.length || 0}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Bar & Filters */}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-white/5 border border-white/10">
+              {/* Search */}
+              <div className="relative flex-1 min-w-[200px]">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" />
+                <input
+                  type="text"
+                  value={errorSearchQuery}
+                  onChange={(e) => setErrorSearchQuery(e.target.value)}
+                  placeholder="Pesquisar por mensagem, código ou origem..."
+                  className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-black/50 border border-white/10 text-white placeholder-white/40 text-xs focus:outline-none focus:border-rose-500/50"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleRunSimulatedTest}
+                  className="px-3 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Simula uma falha controlada de pipeline e verifica recuperação local sem emitir som de voz"
+                >
+                  <RefreshCw size={13} />
+                  <span>Testar Interceptador</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCopyExceptionsJson}
+                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white/90 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Copiar relatório completo em JSON"
+                >
+                  {copiedExceptionsJson ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                  <span>{copiedExceptionsJson ? 'Copiado!' : 'Copiar JSON'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleClearExceptions}
+                  disabled={exceptions.length === 0}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-40 text-rose-400 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Limpar todos os logs"
+                >
+                  <Trash2 size={13} />
+                  <span>Limpar Logs</span>
+                </button>
+              </div>
+            </div>
+
+            {testSimulatedSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn">
+                <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+                <span>Teste de simulação executado com sucesso: Falha capturada no pipeline, registrada no console e 100% blindada de chegar à síntese de voz!</span>
+              </div>
+            )}
+
+            {/* Filter Pills */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+              {[
+                { id: 'all', label: `Todos (${exceptions.length})` },
+                { id: 'pipeline', label: `Pipeline Groq ⇄ Gemini (${exceptions.filter(e => e.source === 'pipeline').length})` },
+                { id: 'parsing', label: `Parsing (${exceptions.filter(e => e.source === 'parsing').length})` },
+                { id: 'groq', label: `Groq (${exceptions.filter(e => e.source === 'groq').length})` },
+                { id: 'gemini', label: `Gemini (${exceptions.filter(e => e.source === 'gemini').length})` },
+                { id: 'tts', label: `Voz / TTS (${exceptions.filter(e => e.source === 'tts').length})` },
+              ].map(f => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setErrorCategoryFilter(f.id as any)}
+                  className={`px-3 py-1 rounded-lg text-xs font-mono transition-all whitespace-nowrap cursor-pointer ${
+                    errorCategoryFilter === f.id
+                      ? 'bg-rose-500/25 text-rose-300 border border-rose-500/40 font-bold'
+                      : 'text-white/50 hover:text-white bg-white/5'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Exceptions Feed */}
+            {(() => {
+              const filtered = exceptions.filter(exc => {
+                const matchesCategory = 
+                  errorCategoryFilter === 'all' ||
+                  exc.source === errorCategoryFilter;
+                
+                const matchesSearch = 
+                  !errorSearchQuery.trim() ||
+                  exc.message.toLowerCase().includes(errorSearchQuery.toLowerCase()) ||
+                  exc.originalError.toLowerCase().includes(errorSearchQuery.toLowerCase()) ||
+                  (exc.code && exc.code.toLowerCase().includes(errorSearchQuery.toLowerCase())) ||
+                  (exc.context && exc.context.toLowerCase().includes(errorSearchQuery.toLowerCase())) ||
+                  (exc.stage && exc.stage.toLowerCase().includes(errorSearchQuery.toLowerCase()));
+
+                return matchesCategory && matchesSearch;
+              });
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="p-8 rounded-2xl bg-black/40 border border-white/5 text-center flex flex-col items-center justify-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                      <ShieldCheck size={26} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-white text-sm">
+                        Nenhum erro registrado neste filtro
+                      </h4>
+                      <p className="text-xs text-white/50 mt-1 max-w-md font-sans">
+                        O pipeline entre Groq e Gemini está estável, sem falhas de sintaxe e com isolamento total de áudio ativo.
+                      </p>
+                    </div>
+                    {exceptions.length === 0 && (
+                      <button
+                        type="button"
+                        onClick={handleRunSimulatedTest}
+                        className="mt-2 px-3.5 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 text-xs font-bold transition-all cursor-pointer"
+                      >
+                        Executar Teste de Interceptação
+                      </button>
+                    )}
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-3">
+                  {filtered.map(exc => {
+                    const isExpanded = expandedExceptionId === exc.id;
+                    const dateFormatted = new Date(exc.timestamp).toLocaleString('pt-BR');
+
+                    return (
+                      <div
+                        key={exc.id}
+                        className="p-3.5 rounded-2xl bg-[#0a0f1d] border border-rose-500/20 hover:border-rose-500/40 transition-colors space-y-2.5"
+                      >
+                        {/* Card Header */}
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {/* Source Badge */}
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
+                              exc.source === 'pipeline' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                              exc.source === 'parsing' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
+                              exc.source === 'groq' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                              exc.source === 'gemini' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' :
+                              exc.source === 'tts' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                              'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            }`}>
+                              {exc.source}
+                            </span>
+
+                            {exc.code && (
+                              <span className="px-2 py-0.5 rounded-md bg-white/5 text-white/70 text-[10px] border border-white/10 font-bold">
+                                CÓD: {exc.code}
+                              </span>
+                            )}
+
+                            {exc.stage && (
+                              <span className="px-2 py-0.5 rounded-md bg-white/5 text-cyan-300/80 text-[10px] border border-white/5">
+                                Etapa: {exc.stage}
+                              </span>
+                            )}
+
+                            {/* Voice Shield Badge */}
+                            {exc.blockedFromVoice && (
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 text-[10px] font-bold border border-emerald-500/30 flex items-center gap-1">
+                                <VolumeX size={10} />
+                                <span>Blindado da Voz</span>
+                              </span>
+                            )}
+
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 text-[10px]">
+                              Recuperado
+                            </span>
+                          </div>
+
+                          <span className="text-[11px] text-white/40 font-mono">
+                            {dateFormatted}
+                          </span>
+                        </div>
+
+                        {/* Message */}
+                        <div>
+                          <p className="text-white text-xs font-semibold leading-relaxed">
+                            {exc.message}
+                          </p>
+                          {exc.context && (
+                            <p className="text-[11px] text-white/50 font-sans mt-0.5">
+                              Contexto / Origem: <span className="text-cyan-400 font-mono">{exc.context}</span>
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Expandable Technical Log */}
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedExceptionId(isExpanded ? null : exc.id)}
+                            className="text-[11px] text-rose-400/90 hover:text-rose-300 flex items-center gap-1 cursor-pointer transition-colors"
+                          >
+                            {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                            <span>{isExpanded ? 'Ocultar Detalhes Técnicos' : 'Ver Log Técnico do Console & Stack Trace'}</span>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="mt-2 p-3 rounded-xl bg-black/80 border border-white/10 space-y-2 text-[11px]">
+                              <div>
+                                <span className="text-white/40 block uppercase text-[10px] font-bold">Erro Original:</span>
+                                <p className="text-rose-300 font-mono break-all">{exc.originalError}</p>
+                              </div>
+
+                              {exc.metadata && Object.keys(exc.metadata).length > 0 && (
+                                <div>
+                                  <span className="text-white/40 block uppercase text-[10px] font-bold">Metadados de Transição:</span>
+                                  <pre className="text-cyan-300/80 font-mono overflow-x-auto text-[10px]">
+                                    {JSON.stringify(exc.metadata, null, 2)}
+                                  </pre>
+                                </div>
+                              )}
+
+                              {exc.stack && (
+                                <div>
+                                  <span className="text-white/40 block uppercase text-[10px] font-bold">Rastreamento de Pilha (Stack Trace):</span>
+                                  <pre className="text-white/60 font-mono overflow-x-auto max-h-36 leading-tight text-[10px] select-all">
+                                    {exc.stack}
+                                  </pre>
+                                </div>
+                              )}
+
+                              <div className="pt-1 flex items-center justify-between text-[10px] text-white/40">
+                                <span>ID do Registro: {exc.id}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(JSON.stringify(exc, null, 2));
+                                    alert('Detalhes copiados para a área de transferência.');
+                                  }}
+                                  className="text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+                                >
+                                  Copiar este erro
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         )}
 

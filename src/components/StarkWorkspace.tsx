@@ -98,6 +98,8 @@ interface StarkTimeline {
   tasks: { id: string; text: string; done: boolean }[];
 }
 
+export type WorkspaceTab = 'finance' | 'news' | 'maps' | 'calendar' | 'time' | 'generator' | 'projects';
+
 export default function StarkWorkspace({ 
   onClose,
   activeTab: controlledTab,
@@ -110,8 +112,8 @@ export default function StarkWorkspace({
   onAskJarvisProject
 }: { 
   onClose: () => void;
-  activeTab?: 'finance' | 'news' | 'maps';
-  onTabChange?: (tab: 'finance' | 'news' | 'maps') => void;
+  activeTab?: WorkspaceTab;
+  onTabChange?: (tab: WorkspaceTab) => void;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
   news?: any[];
@@ -119,7 +121,7 @@ export default function StarkWorkspace({
   onAskJarvisNews?: (title: string, source: string) => void;
   onAskJarvisProject?: (project: StarkProject) => void;
 }) {
-  const [localActiveTab, setLocalActiveTab] = useState<'finance' | 'news' | 'maps'>('maps');
+  const [localActiveTab, setLocalActiveTab] = useState<WorkspaceTab>('maps');
   const [newsCategoryFilter, setNewsCategoryFilter] = useState('Todos');
   const activeTab = controlledTab !== undefined ? controlledTab : localActiveTab;
   const setActiveTab = onTabChange || setLocalActiveTab;
@@ -1231,7 +1233,10 @@ export default function StarkWorkspace({
         {/* ---------------------------------------------------- */}
         {activeTab === 'maps' && (
           <div className="w-full h-full flex-1 relative min-h-[550px] animate-fadeIn flex flex-col">
-            <GoogleMapsView onAskJarvis={onAskJarvisNews} jarvisSpeak={jarvisSpeak} />
+            <GoogleMapsView 
+              onAskJarvis={onAskJarvisNews ? (prompt: string) => onAskJarvisNews(prompt, 'Google Maps') : undefined} 
+              jarvisSpeak={jarvisSpeak} 
+            />
           </div>
         )}
 

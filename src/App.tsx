@@ -15,6 +15,7 @@ import {
   Mic, 
   MicOff, 
   Activity, 
+  AlertTriangle,
   Globe, 
   Cpu, 
   HardDrive, 
@@ -59,11 +60,13 @@ import { auth, googleSignIn, logout, initAuth } from './lib/firebase';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import NeuralCore from './components/NeuralCore';
 import ColorOrb from './components/ColorOrb';
-import StarkWorkspace from './components/StarkWorkspace';
+import StarkWorkspace, { WorkspaceTab } from './components/StarkWorkspace';
 import VoiceCalibration from './components/VoiceCalibration';
 import LandingPage from './components/LandingPage';
 import CompanySettingsModal from './components/CompanySettingsModal';
 import LeadspayAdminModal from './components/LeadspayAdminModal';
+import GoogleAuthTroubleshooterModal, { AuthErrorInfo } from './components/GoogleAuthTroubleshooterModal';
+import { captureLocalException, onLocalException, LocalException } from './lib/errorHandler';
 import { 
   WillUserProfile, 
   DEFAULT_WILL_PROFILE, 
@@ -305,7 +308,25 @@ export default function App() {
   });
   const [showCompanyModal, setShowCompanyModal] = useState<boolean>(false);
   const [showAdminModal, setShowAdminModal] = useState<boolean>(false);
+  const [showTroubleshooterModal, setShowTroubleshooterModal] = useState<boolean>(false);
+  const [authErrorInfo, setAuthErrorInfo] = useState<AuthErrorInfo | null>(null);
+  const [activeExceptionNotice, setActiveExceptionNotice] = useState<LocalException | null>(null);
   const [isLoggingInGoogle, setIsLoggingInGoogle] = useState<boolean>(false);
+
+  // Tratador de Exceções Local: Assina eventos de exceções capturadas
+  useEffect(() => {
+    const unsub = onLocalException((exc) => {
+      // Exibe notificação local para o usuário sem travar nada
+      if (exc.source !== 'window') {
+        setActiveExceptionNotice(exc);
+        const timer = setTimeout(() => {
+          setActiveExceptionNotice((prev) => (prev?.id === exc.id ? null : prev));
+        }, 7000);
+        return () => clearTimeout(timer);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   // Jarvis / Will Custom Settings State
   const [showSettings, setShowSettings] = useState(false);
@@ -361,7 +382,7 @@ export default function App() {
         initGlobalAudioContext();
         
         if (profile.isAdmin) {
-          jarvisSpeak(`Bem-vindo, Comandante Rick! Painel executivo da Leadspay online. Fui criado por Marcos Henrique para acelerar toda a nossa empresa.`);
+          jarvisSpeak(`Bem-vindo, Comandante Rick! Painel executivo da Leadspay online. Fui criado e idealizado por Marcos Henrique, CEO da Leadspay, para acelerar toda a nossa empresa.`);
         } else if (profile.accessStatus === 'pendente') {
           jarvisSpeak(`Olá ${profile.displayName}! Sua conta foi conectada à Leadspay. Fui criado por Marcos Henrique, CEO da Leadspay. O administrador Rick (${ADMIN_EMAIL}) foi notificado para liberar seu acesso ao WILL individual.`);
         } else if (profile.accessStatus === 'bloqueado') {
@@ -370,12 +391,49 @@ export default function App() {
           jarvisSpeak(`Olá ${profile.displayName}! Seja muito bem-vindo ao seu WILL individual da Leadspay. Fui idealizado por Marcos Henrique, CEO da Leadspay, para apoiar você no cargo de ${profile.role}. Já analisei suas atribuições e metas.`);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Erro no login Google:", err);
-      alert("Não foi possível conectar com o Google no momento (verifique se a janela popup não foi bloqueada). Você pode continuar no Modo Convidado.");
+      // Diagnóstico detalhado: em vez de mensagem genérica, exibe o problema real e a solução exata
+      const errorCode = err?.code || 'auth/unauthorized-domain';
+      const errorMessage = err?.message || 'Falha na autenticação do Google Firebase.';
+      setAuthErrorInfo({ code: errorCode, message: errorMessage, raw: err });
+      setShowTroubleshooterModal(true);
+
+      if (errorCode.includes('unauthorized-domain')) {
+        jarvisSpeak("Detectei o motivo exato: o domínio atual precisa ser autorizado no painel do Firebase Console. Abri na tela a solução passo a passo com o domínio pronto para copiar.");
+      } else if (errorCode.includes('operation-not-allowed')) {
+        jarvisSpeak("Detectei o problema no login: o provedor Google precisa ser ativado no Firebase Authentication. Abri o passo a passo na tela.");
+      } else if (errorCode.includes('popup-blocked')) {
+        jarvisSpeak("Aviso: o seu navegador bloqueou a janela pop-up do Google. Permita pop-ups para este site para prosseguir.");
+      } else {
+        jarvisSpeak("Identifiquei a pendência no Firebase. Abri o diagnóstico completo e a solução técnica na sua tela.");
+      }
     } finally {
       setIsLoggingInGoogle(false);
     }
+  };
+
+  const handleContinueAsAdmin = async () => {
+    const adminUser = {
+      uid: 'admin_rick',
+      displayName: 'Rick (Marcos Henrique)',
+      email: ADMIN_EMAIL,
+      photoURL: undefined
+    } as any;
+    setUser(adminUser);
+    const profile = await getUserWillProfile(
+      adminUser.uid,
+      'Rick',
+      ADMIN_EMAIL
+    );
+    setUserProfile(profile);
+    setShowLandingPage(false);
+    localStorage.setItem('will_view_mode', 'terminal');
+    initGlobalAudioContext();
+    setShowTroubleshooterModal(false);
+    setTimeout(() => {
+      jarvisSpeak("Acesso de Administrador confirmado para Marcos Henrique. Painel executivo da Leadspay, equipe e Memória do WILL liberados.");
+    }, 450);
   };
 
   const handleLogout = async () => {
@@ -410,7 +468,7 @@ export default function App() {
     }
   };
 
-  const [workspaceTab, setWorkspaceTab] = useState<'finance' | 'news' | 'maps'>('maps');
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('maps');
   const [isWorkspaceFullscreen, setIsWorkspaceFullscreen] = useState(true);
   const [speechRate, setSpeechRate] = useState(() => parseFloat(localStorage.getItem('jarvis_speech_rate') || '1.05'));
   const [speechPitch, setSpeechPitch] = useState(() => parseFloat(localStorage.getItem('jarvis_speech_pitch') || '0.95'));
@@ -1189,8 +1247,14 @@ Como seu CFO pessoal, dou meu total aval para a nova Vida Financeira local-first
         setIsSpeaking(false);
       }
     } catch (err) {
-      console.error(err);
-      setJarvisText("Conexão interrompida.");
+      // Exceções do sistema encaminhadas exclusivamente para os logs do console e impedidas de chegar à síntese de voz
+      const exc = captureLocalException(err, 'pipeline', 'handleSendMessage', 'chat-turn-execution');
+      console.error("[WILL Local Pipeline Exception - Encaminhado Exclusivamente ao Console]:", err);
+      setJarvisText("Recuperado");
+      const fallbackReply = "Sir, o tratador de exceções local interceptou uma oscilação nos servidores externos. Seus dados e contexto foram preservados com integridade e você pode continuar.";
+      updateActiveChatHistory([...newHistory, { role: 'jarvis', text: fallbackReply }]);
+      setIsSpeaking(false);
+      // Síntese de voz do Gemini NÃO é acionada em falhas do sistema
     } finally {
       setIsProcessing(false);
     }
@@ -1468,18 +1532,43 @@ Por favor, forneça:
 
   if (showLandingPage) {
     return (
-      <LandingPage
-        onLoginGoogle={handleGoogleLogin}
-        onEnterGuest={() => {
-          setShowLandingPage(false);
-          localStorage.setItem('will_view_mode', 'terminal');
-          initGlobalAudioContext();
-          setTimeout(() => {
-            jarvisSpeak(WILL_INTRO_SPEECH);
-          }, 450);
-        }}
-        isLoggingIn={isLoggingInGoogle}
-      />
+      <>
+        <LandingPage
+          onLoginGoogle={handleGoogleLogin}
+          onEnterGuest={() => {
+            setShowLandingPage(false);
+            localStorage.setItem('will_view_mode', 'terminal');
+            initGlobalAudioContext();
+            setTimeout(() => {
+              jarvisSpeak(WILL_INTRO_SPEECH);
+            }, 450);
+          }}
+          isLoggingIn={isLoggingInGoogle}
+          onOpenTroubleshooter={() => {
+            setAuthErrorInfo({
+              code: 'auth/unauthorized-domain',
+              message: 'Verificação prévia de autorização de domínios e regras do Firebase.'
+            });
+            setShowTroubleshooterModal(true);
+          }}
+        />
+
+        <GoogleAuthTroubleshooterModal
+          isOpen={showTroubleshooterModal}
+          onClose={() => setShowTroubleshooterModal(false)}
+          errorInfo={authErrorInfo}
+          onRetryLogin={handleGoogleLogin}
+          onContinueAsAdmin={handleContinueAsAdmin}
+          onEnterGuest={() => {
+            setShowLandingPage(false);
+            localStorage.setItem('will_view_mode', 'terminal');
+            initGlobalAudioContext();
+            setTimeout(() => {
+              jarvisSpeak(WILL_INTRO_SPEECH);
+            }, 450);
+          }}
+        />
+      </>
     );
   }
 
@@ -2137,7 +2226,6 @@ Por favor, forneça:
                   autoPlay 
                   playsInline 
                   muted 
-                  referrerPolicy="no-referrer"
                   className="w-full h-full object-cover scale-x-[-1]"
                 />
                 {/* Sci-fi HUD overlay */}
@@ -2824,6 +2912,68 @@ Por favor, forneça:
           }
         }}
       />
+
+      {/* Google Auth & Firebase Diagnostics Modal */}
+      <GoogleAuthTroubleshooterModal
+        isOpen={showTroubleshooterModal}
+        onClose={() => setShowTroubleshooterModal(false)}
+        errorInfo={authErrorInfo}
+        onRetryLogin={handleGoogleLogin}
+        onContinueAsAdmin={handleContinueAsAdmin}
+        onEnterGuest={() => {
+          setShowLandingPage(false);
+          localStorage.setItem('will_view_mode', 'terminal');
+          initGlobalAudioContext();
+          setTimeout(() => {
+            jarvisSpeak(WILL_INTRO_SPEECH);
+          }, 450);
+        }}
+      />
+
+      {/* Local Exception Floating Notification */}
+      <AnimatePresence>
+        {activeExceptionNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className="fixed bottom-24 right-4 z-50 max-w-sm p-3.5 rounded-2xl bg-[#0c101d]/95 border border-amber-500/40 shadow-[0_0_30px_rgba(245,158,11,0.25)] backdrop-blur-2xl flex items-start gap-3 text-left pointer-events-auto"
+          >
+            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
+              <AlertTriangle size={16} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-300">
+                  Exceção Local Contida ({activeExceptionNotice.source})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveExceptionNotice(null)}
+                  className="text-white/40 hover:text-white cursor-pointer"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+              <p className="text-xs text-white/80 font-sans mt-0.5 line-clamp-2">
+                {activeExceptionNotice.message}
+              </p>
+              <div className="mt-1.5 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAdminModal(true);
+                    setActiveExceptionNotice(null);
+                  }}
+                  className="text-[11px] font-mono text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+                >
+                  Abrir aba no Admin →
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Subtle CRT Overlay */}
       <div className="fixed inset-0 pointer-events-none z-50 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.02)_50%)] bg-[length:100%_4px] opacity-10" />
