@@ -1363,11 +1363,17 @@ Fale em primeira pessoa como J.A.R.V.I.S. (com a elegância de sempre, chamando-
       console.error("[Groq Fallback Engine Error - Routed to Console Only]:", groqErr);
     }
 
-    if (error?.message?.includes('resource_exhausted') || error?.message?.includes('quota')) {
-      return "Sir, a cota da API de IA foi temporariamente atingida nos servidores externos. O tratador de exceções local manteve seus dados e o sistema seguro. Por favor, aguarde alguns instantes ou continue navegando nas funções locais e rotas de mapa.";
+    const reason = String(error?.message || "").toLowerCase();
+    if (reason.includes("401") || reason.includes("sessão") || reason.includes("login")) {
+      return "Não consegui autenticar sua sessão para acessar a IA. Saia da conta, entre novamente e tente enviar sua mensagem.";
     }
-
-    return "Sir, o tratador de exceções local interceptou uma oscilação na resposta dos servidores. Todos os dados permanecem salvos com segurança. Você pode reenviar a mensagem em instantes.";
+    if (reason.includes("429") || reason.includes("resource_exhausted") || reason.includes("quota") || reason.includes("limite")) {
+      return "Os provedores de IA não conseguiram responder. O Gemini informou um possível limite de uso e a alternativa Groq também falhou. Tente novamente mais tarde ou verifique as cotas e chaves no painel de administração.";
+    }
+    if (reason.includes("503") || reason.includes("configure")) {
+      return "O serviço de IA ainda não está configurado corretamente no servidor. Verifique as variáveis GEMINI_API_KEY e GROQ_API_KEY na Vercel.";
+    }
+    return "Não consegui conectar aos serviços de IA neste momento. Verifique sua conexão ou tente novamente. Se continuar, consulte os registros das rotas /api/gemini e /api/groq na Vercel.";
   }
 }
 
