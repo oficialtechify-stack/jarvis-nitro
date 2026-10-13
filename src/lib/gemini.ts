@@ -287,8 +287,8 @@ function parseBase64Image(base64Url: string) {
 }
 
 async function callGeminiWithFallback(params: any): Promise<any> {
-  // Modelos otimizados com cotas gratuitas maiores e menor latência (gemini-2.0-flash e gemini-1.5-flash)
-  const models = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
+  // Modelos otimizados com cotas gratuitas maiores e menor latência (gemini-2.5-flash e gemini-1.5-flash)
+  const models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"];
   let lastError: any = null;
   
   for (const model of models) {
@@ -327,7 +327,7 @@ async function callGeminiStreamWithFallback(
   onSentenceComplete?: (sentence: string) => void
 ): Promise<{ text: string; functionCalls?: any[] }> {
   // Modelos com alta cota e suporte a streaming de baixa latência
-  const models = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
+  const models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash"];
   let lastError: any = null;
 
   for (const model of models) {
@@ -1650,7 +1650,7 @@ export async function jarvisSpeakSingleSentence(sentence: string, targetSpeechId
   if (shouldTryApi) {
     try {
       // Modelos de síntese de voz com cotas otimizadas e baixa latência
-      const ttsModels = ["gemini-3.8-flash-lite-tts", "gemini-3.1-flash-tts-preview"];
+      const ttsModels = ["gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts"];
       let response: any = null;
 
       for (const ttsModel of ttsModels) {
@@ -1842,7 +1842,7 @@ O formato DEVE ser um JSON estrito (array de objetos) sem blocos de texto ou exp
 ]`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         tools: [
@@ -1892,7 +1892,7 @@ Categoria: "${category}"
 Explique o impacto direto e a recomendação estratégica para o Sir Henrique.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }]
     });
 
@@ -1974,7 +1974,7 @@ Retorne APENAS um objeto JSON válido (sem tags markdown de código e sem texto 
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-2.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         responseMimeType: "application/json",
