@@ -14,11 +14,11 @@ export default async function handler(req: any, res: any) {
       res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
       res.setHeader("X-Content-Type-Options", "nosniff");
       const chunks = await ai.models.generateContentStream({ model, ...options });
-      for await (const chunk of chunks) res.write(JSON.stringify({ text: chunk.text || "", candidates: chunk.candidates }) + "\n");
+      for await (const chunk of chunks) res.write(JSON.stringify({ text: chunk.text || "", candidates: chunk.candidates, functionCalls: chunk.functionCalls }) + "\n");
       return res.end();
     }
     const answer = await ai.models.generateContent({ model, ...options });
-    return res.status(200).json({ text: answer.text || "", candidates: answer.candidates, usageMetadata: answer.usageMetadata });
+    return res.status(200).json({ text: answer.text || "", candidates: answer.candidates, functionCalls: answer.functionCalls, usageMetadata: answer.usageMetadata });
   } catch (error: any) {
     console.error("Gemini request failed", error?.status || error?.name);
     if (res.headersSent) return res.end();
