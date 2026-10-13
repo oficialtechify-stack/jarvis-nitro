@@ -6,7 +6,7 @@ export default async function handler(req: any, res: any) {
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) return res.status(503).json({ error: "Configure GEMINI_API_KEY na Vercel." });
   const { model, stream, ...options } = req.body || {};
-  const allowed = new Set(["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-3.1-pro-preview"]);
+  const allowed = new Set(["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]);
   if (!allowed.has(model)) return res.status(400).json({ error: "Modelo Gemini inválido." });
   try {
     const ai = new GoogleGenAI({ apiKey: key });
