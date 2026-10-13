@@ -1,4 +1,4 @@
-import { GoogleGenAI, Modality, Type, FunctionDeclaration } from "@google/genai";
+import { Modality, Type, FunctionDeclaration } from "@google/genai";
 import { auth, getAccessToken } from "./firebase";
 import { addTransaction, saveGoal } from "./financeService";
 import { createGoogleEvent } from "./calendar";
@@ -9,42 +9,55 @@ import {
   isSystemErrorOrLog 
 } from "./errorHandler";
 
-const getGeminiFallback = () => {
-  return [
-    "AQ.Ab8RN",
-    "6IM12DUf",
-    "1WzpX92O",
-    "83_GqOrn",
-    "8bG67iQp",
-    "AVJ272jp",
-    "hqDUA"
-  ].join("");
+// All AI credentials stay server-side. Authenticated sessions use Vercel API routes.
+async function authenticatedAIRequest(url: string, body: unknown): Promise<Response> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Entre com sua conta para usar a inteligência artificial.");
+  const token = await user.getIdToken();
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail.error || `Serviço de IA indisponível (HTTP ${response.status})`);
+  }
+  return response;
+}
+
+const apiKey = "server-managed";
+const ai = {
+  models: {
+    async generateContent(params: any): Promise<any> {
+      const result = await authenticatedAIRequest("/api/gemini", { ...params, stream: false });
+      return result.json();
+    },
+    async generateContentStream(params: any): Promise<any> {
+      const result = await authenticatedAIRequest("/api/gemini", { ...params, stream: true });
+      const body = result.body;
+      if (!body) throw new Error("Resposta em streaming indisponível");
+      return (async function* () {
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+              if (line.trim()) yield JSON.parse(line);
+            }
+          }
+          if (buffer.trim()) yield JSON.parse(buffer);
+        } finally { reader.releaseLock(); }
+      })();
+    }
+  }
 };
-
-const getGroqFallback = () => {
-  return [
-    "gsk_trUg",
-    "OUTnIYuE",
-    "06DNQTrO",
-    "WGdyb3FY",
-    "V2TRe9Ml",
-    "SvdEkwlq",
-    "nNHCA1fP"
-  ].join("");
-};
-
-const apiKey = 
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_API_KEY) ||
-  process.env.GEMINI_API_KEY || 
-  process.env.GOOGLE_API_KEY || 
-  getGeminiFallback();
-
-const groqApiKey = 
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_GROQ_API_KEY) ||
-  process.env.GROQ_API_KEY || 
-  getGroqFallback();
-
-const ai = new GoogleGenAI({ apiKey });
 
 export interface SpeechSettings {
   rate: number;
@@ -63,14 +76,14 @@ export function getSavedSpeechSettings(): SpeechSettings {
       voiceName: '',
       useLocalAlways: false,
       primaryEngine: 'groq',
-      groqModel: 'llama-3.1-70b-versatile',
+      groqModel: 'openai/gpt-oss-120b',
     };
   }
-  let savedModel = localStorage.getItem('jarvis_groq_model') || 'llama-3.1-70b-versatile';
+  let savedModel = localStorage.getItem('jarvis_groq_model') || 'openai/gpt-oss-120b';
   // Migração automática de modelo descontinuado (llama-3.3-70b-versatile gerava erro 404 na Groq)
   if (savedModel === 'llama-3.3-70b-versatile' || savedModel.includes('3.3')) {
-    savedModel = 'llama-3.1-70b-versatile';
-    localStorage.setItem('jarvis_groq_model', 'llama-3.1-70b-versatile');
+    savedModel = 'openai/gpt-oss-120b';
+    localStorage.setItem('jarvis_groq_model', 'openai/gpt-oss-120b');
   }
   return {
     rate: parseFloat(localStorage.getItem('jarvis_speech_rate') || '1.05'),
@@ -88,19 +101,15 @@ export async function getGroqResponse(
   onTokenChunk?: (token: string, fullText: string) => void,
   onSentenceComplete?: (sentence: string) => void
 ): Promise<string> {
-  if (!groqApiKey) {
-    throw new Error("Missing Groq API Key");
-  }
-
   const settings = getSavedSpeechSettings();
-  const configuredModel = settings.groqModel || "llama-3.1-70b-versatile";
+  const configuredModel = settings.groqModel || "openai/gpt-oss-120b";
 
   // Lista de modelos válidos e ativos na Groq (com contingência para evitar erro 404)
   const candidateModels = [
     configuredModel,
-    "llama-3.1-70b-versatile",
-    "llama3-70b-8192",
-    "llama-3.1-8b-instant"
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-20b"
   ].filter((m, idx, self) => m && self.indexOf(m) === idx && m !== 'llama-3.3-70b-versatile');
 
   const systemMessage = `SISTEMA: Você é o WILL, o copiloto de inteligência artificial corporativo e pessoal avançado da LEADSPAY.
@@ -126,22 +135,15 @@ export async function getGroqResponse(
     let responseText = '';
     try {
       console.log(`[Groq Pipeline] Executando chamada para modelo: ${selectedModel} (Stream SSE: ${isStreaming})`);
-      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${groqApiKey}`
-        },
-        body: JSON.stringify({
-          model: selectedModel,
-          messages: [
-            { role: "system", content: systemMessage },
-            { role: "user", content: prompt }
-          ],
-          temperature: 0.7,
-          max_tokens: 1536,
-          stream: isStreaming
-        })
+      const response = await authenticatedAIRequest("/api/groq", {
+        model: selectedModel,
+        messages: [
+          { role: "system", content: systemMessage },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 1536,
+        stream: isStreaming
       });
 
       if (!response.ok) {
@@ -290,7 +292,7 @@ function parseBase64Image(base64Url: string) {
 
 async function callGeminiWithFallback(params: any): Promise<any> {
   // Modelos otimizados com cotas gratuitas maiores e menor latência (gemini-2.0-flash e gemini-1.5-flash)
-  const models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash", "gemini-flash-latest"];
+  const models = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
   let lastError: any = null;
   
   for (const model of models) {
@@ -329,7 +331,7 @@ async function callGeminiStreamWithFallback(
   onSentenceComplete?: (sentence: string) => void
 ): Promise<{ text: string; functionCalls?: any[] }> {
   // Modelos com alta cota e suporte a streaming de baixa latência
-  const models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash", "gemini-flash-latest"];
+  const models = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
   let lastError: any = null;
 
   for (const model of models) {
