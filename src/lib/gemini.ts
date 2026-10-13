@@ -46,7 +46,7 @@ const ai = {
             const { value, done } = await reader.read();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\\n");
+            const lines = buffer.split("\n");
             buffer = lines.pop() || "";
             for (const line of lines) {
               if (line.trim()) yield JSON.parse(line);
@@ -81,7 +81,7 @@ export function getSavedSpeechSettings(): SpeechSettings {
   }
   let savedModel = localStorage.getItem('jarvis_groq_model') || 'openai/gpt-oss-120b';
   // Migração automática de modelo descontinuado (llama-3.3-70b-versatile gerava erro 404 na Groq)
-  if (savedModel === 'llama-3.3-70b-versatile' || savedModel.includes('3.3')) {
+  if (!['openai/gpt-oss-120b', 'openai/gpt-oss-20b'].includes(savedModel)) {
     savedModel = 'openai/gpt-oss-120b';
     localStorage.setItem('jarvis_groq_model', 'openai/gpt-oss-120b');
   }
@@ -103,14 +103,10 @@ export async function getGroqResponse(
 ): Promise<string> {
   const settings = getSavedSpeechSettings();
   const configuredModel = settings.groqModel || "openai/gpt-oss-120b";
+  const safeModel = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"].includes(configuredModel) ? configuredModel : "openai/gpt-oss-120b";
 
   // Lista de modelos válidos e ativos na Groq (com contingência para evitar erro 404)
-  const candidateModels = [
-    configuredModel,
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
-    "openai/gpt-oss-20b"
-  ].filter((m, idx, self) => m && self.indexOf(m) === idx && m !== 'llama-3.3-70b-versatile');
+  const candidateModels = [...new Set([safeModel, "openai/gpt-oss-120b", "openai/gpt-oss-20b"])];
 
   const systemMessage = `SISTEMA: Você é o WILL, o copiloto de inteligência artificial corporativo e pessoal avançado da LEADSPAY.
   
